@@ -450,16 +450,24 @@ pre.notion-pre .num{color:#80c0e0}
 .save-msg{font-family:var(--mono);font-size:.72rem;color:var(--green);display:none}
 .full-width{grid-column:1/-1}
 
-/* REVIEW PAGE */
-.review-shell{max-width:700px;margin:60px auto;padding:0 24px}
-.review-title{font-family:var(--head);font-size:.75rem;letter-spacing:.2em;text-transform:uppercase;color:var(--amber);margin-bottom:6px}
-.review-name{font-family:var(--body);font-size:1.2rem;color:var(--text);margin-bottom:20px}
-.review-post{white-space:pre-wrap;background:var(--panel);border:1px solid var(--border);padding:20px;font-family:var(--body);font-size:.95rem;line-height:1.7;color:var(--text);margin-bottom:24px}
-.review-actions{display:flex;gap:12px}
-.btn-approve{background:var(--amber);color:#08080a;border:none;padding:11px 28px;font-family:var(--head);font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;font-weight:700;transition:opacity .15s}
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;display:none;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--panel);border:1px solid var(--border);width:min(680px,95vw);max-height:85vh;display:flex;flex-direction:column}
+.modal-head{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.modal-head-title{font-family:var(--head);font-size:.65rem;letter-spacing:.2em;text-transform:uppercase;color:var(--amber)}
+.modal-close{background:none;border:none;color:var(--text-dim);font-size:1.2rem;cursor:pointer;line-height:1;padding:0 4px}
+.modal-close:hover{color:var(--amber)}
+.modal-name{padding:14px 20px 0;font-family:var(--body);font-size:1.05rem;color:var(--text);flex-shrink:0}
+.modal-post{flex:1;overflow-y:auto;margin:12px 20px;white-space:pre-wrap;background:rgba(0,0,0,.3);border:1px solid var(--border);padding:16px;font-family:var(--body);font-size:.9rem;line-height:1.7;color:var(--text)}
+.modal-actions{padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;flex-shrink:0}
+.btn-approve{background:var(--amber);color:#08080a;border:none;padding:10px 24px;font-family:var(--head);font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;font-weight:700;transition:opacity .15s}
 .btn-approve:hover{opacity:.85}
-.btn-reject{background:none;border:1px solid var(--red);color:var(--red);padding:11px 28px;font-family:var(--head);font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:all .15s}
+.btn-approve:disabled{opacity:.4;cursor:not-allowed}
+.btn-reject{background:none;border:1px solid var(--red);color:var(--red);padding:10px 24px;font-family:var(--head);font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:all .15s}
 .btn-reject:hover{background:rgba(224,64,40,.1)}
+.btn-reject:disabled{opacity:.4;cursor:not-allowed}
+.modal-msg{font-family:var(--mono);font-size:.75rem;color:var(--text-dim);margin-left:auto;align-self:center}
 
 @media(max-width:700px){
   .sidebar{width:56px}
@@ -615,6 +623,23 @@ _DASHBOARD_HTML = """<!doctype html>
 </div><!-- /main -->
 </div><!-- /shell -->
 
+<!-- REVIEW MODAL -->
+<div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-head-title">Review Post</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-name" id="modal-name"></div>
+    <div class="modal-post" id="modal-post"></div>
+    <div class="modal-actions">
+      <button class="btn-approve" id="modal-approve" onclick="submitReview('approve')">✓ Approve &amp; Post</button>
+      <button class="btn-reject"  id="modal-reject"  onclick="submitReview('reject')">✗ Reject</button>
+      <span class="modal-msg" id="modal-msg"></span>
+    </div>
+  </div>
+</div>
+
 <script>
 function switchTab(name, el) {{
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -647,7 +672,7 @@ async function loadPosts() {{
       else rejected++;
       const created = p.created_at ? p.created_at.slice(0,16).replace('T',' ') : '';
       const action = p.status === 'pending'
-        ? `<a class="review-link" href="/review/${{p.id}}">Review →</a>` : '';
+        ? `<a class="review-link" href="#" onclick="openReview('${{p.id}}','${{(p.post_name||'').replace(/'/g,"\\'")}}}');return false">Review →</a>` : '';
       return `<tr>
         <td>${{p.post_name || '(untitled)'}}</td>
         <td><span class="badge badge-${{p.status}}">${{p.status}}</span></td>
@@ -729,6 +754,50 @@ async function runNow() {{
   }}
   btn.disabled = false;
 }}
+
+// Modal
+let _activeReviewId = null;
+
+async function openReview(id, name) {{
+  _activeReviewId = id;
+  document.getElementById('modal-name').textContent = name;
+  document.getElementById('modal-post').textContent = 'Loading...';
+  document.getElementById('modal-msg').textContent = '';
+  document.getElementById('modal-approve').disabled = false;
+  document.getElementById('modal-reject').disabled = false;
+  document.getElementById('modal').classList.add('open');
+  const res = await fetch('/api/review/' + id);
+  const data = await res.json();
+  document.getElementById('modal-post').textContent = data.post_content || '(empty)';
+}}
+
+function closeModal() {{
+  document.getElementById('modal').classList.remove('open');
+  _activeReviewId = null;
+}}
+
+async function submitReview(action) {{
+  if (!_activeReviewId) return;
+  document.getElementById('modal-approve').disabled = true;
+  document.getElementById('modal-reject').disabled = true;
+  document.getElementById('modal-msg').textContent = 'Processing...';
+  const res = await fetch('/review/' + _activeReviewId + '/' + action, {{method:'POST'}});
+  const text = await res.text();
+  // check for error in response
+  if (text.includes('error') || text.includes('Error')) {{
+    document.getElementById('modal-msg').style.color = 'var(--red)';
+    document.getElementById('modal-msg').textContent = 'Error — see details below';
+    document.getElementById('modal-post').textContent = text.replace(/<[^>]*>/g,'').trim();
+    document.getElementById('modal-approve').disabled = false;
+    document.getElementById('modal-reject').disabled = false;
+  }} else {{
+    document.getElementById('modal-msg').style.color = 'var(--green)';
+    document.getElementById('modal-msg').textContent = action === 'approve' ? '✓ Posted to LinkedIn!' : '✗ Rejected';
+    setTimeout(() => {{ closeModal(); loadPosts(); }}, 1500);
+  }}
+}}
+
+document.addEventListener('keydown', e => {{ if(e.key==='Escape') closeModal(); }});
 
 // Init
 loadPosts();
@@ -867,6 +936,17 @@ async def api_run():
         return {"status": "ok", "message": result}
     except Exception as e:
         return {"status": "error", "message": str(e), "trace": traceback.format_exc()}
+
+
+@app.get("/api/review/{review_id}")
+async def api_review(review_id: str):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id, post_name, post_content, status FROM pending_reviews WHERE id = ?", (review_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Not found")
+    return dict(row)
 
 
 @app.get("/review/{review_id}", response_class=HTMLResponse)
