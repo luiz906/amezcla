@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:run.relay.app)",
+      "mcp__Claude_in_Chrome__navigate",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(curl -s -A \"Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/120.0 Safari/537.36\" \"https://run.relay.app/shared/amezcla-daily-drive-blotato-instagram-facebook-Wi8zOUQw9ba2\" -o /tmp/relay_page.html -w \"HTTP %{http_code}\\\\n\")",
+      "Read(//private/tmp/**)",
+      "Bash(curl -s \"https://run.relay.app/_next/data/KH_965VX2TOCjo1Rs_toT/shared/amezcla-daily-drive-blotato-instagram-facebook-Wi8zOUQw9ba2.json\" -w \"\\\\nHTTP %{http_code}\\\\n\" -o /tmp/relay_data.json)"
+    ]
+  }
+}
