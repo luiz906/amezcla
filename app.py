@@ -281,13 +281,14 @@ async def notify_slack(review_id: str, post_name: str, preview: str):
 # ---------------------------------------------------------------------------
 # Main workflow
 # ---------------------------------------------------------------------------
-async def run_workflow():
+async def run_workflow() -> str:
     print(f"[{datetime.now()}] Running LinkedIn post workflow...")
 
     page = await find_notion_page()
     if not page:
-        print("  No pages found with Status=Not Started and ClientsOS=LMTZ. Skipping.")
-        return
+        msg = "No pages found with Status=Not Started and ClientsOS=LMTZ."
+        print(f"  {msg}")
+        return msg
 
     page_id = page["id"]
     post_name = _extract_page_name(page)
@@ -310,7 +311,9 @@ async def run_workflow():
         )
 
     await notify_slack(review_id, post_name, post_text)
-    print(f"  Review ready: {BASE_URL}/review/{review_id}")
+    msg = f"Post generated for '{post_name}'. Review: {BASE_URL}/review/{review_id}"
+    print(f"  {msg}")
+    return msg
 
 
 # ---------------------------------------------------------------------------
@@ -543,16 +546,17 @@ async def run_now_ui():
     """Run workflow from dashboard button."""
     import traceback
     try:
-        await run_workflow()
-        msg = "✅ Workflow ran — check the table below for your new post."
+        result = await run_workflow()
+        msg = f"✅ {result}"
         color = "#10b981"
     except Exception as e:
-        msg = f"❌ Error: {e}"
+        msg = f"❌ {e}"
         color = "#ef4444"
     return HTMLResponse(
-        f'<html><head><meta http-equiv="refresh" content="2;url=/"></head>'
+        f'<html><head><meta http-equiv="refresh" content="4;url=/"></head>'
         f'<body style="font-family:sans-serif;text-align:center;padding:80px;color:{color}">'
-        f'<p style="font-size:1.1rem">{msg}</p><p style="color:#aaa;margin-top:8px">Redirecting...</p></body></html>'
+        f'<p style="font-size:1.1rem;max-width:600px;margin:0 auto">{msg}</p>'
+        f'<p style="color:#aaa;margin-top:12px">Redirecting to dashboard...</p></body></html>'
     )
 
 
