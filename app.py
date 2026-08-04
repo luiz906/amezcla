@@ -867,16 +867,23 @@ _REVIEW_HTML = """<!doctype html>
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d}"
-    prompt_preview = (LINKEDIN_PROMPT[:600] + "...").replace("{", "{{").replace("}", "}}")
-    return _DASHBOARD_HTML.format(
-        css=_KNIGHTS_CSS,
-        next_run=next_run,
-        notion_db_id=NOTION_DB_ID,
-        lmtz_page_id=LMTZ_PAGE_ID,
-        base_url=BASE_URL,
-        prompt_preview=prompt_preview,
-    )
+    import traceback
+    try:
+        next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d}"
+        prompt_preview = (LINKEDIN_PROMPT[:600] + "...").replace("{", "{{").replace("}", "}}")
+        return _DASHBOARD_HTML.format(
+            css=_KNIGHTS_CSS,
+            next_run=next_run,
+            notion_db_id=NOTION_DB_ID,
+            lmtz_page_id=LMTZ_PAGE_ID,
+            base_url=BASE_URL,
+            prompt_preview=prompt_preview,
+        )
+    except Exception as e:
+        return HTMLResponse(
+            f"<pre style='background:#000;color:#e04028;padding:20px'>{traceback.format_exc()}</pre>",
+            status_code=200
+        )
 
 
 @app.get("/api/posts")
