@@ -59,6 +59,12 @@ def init_db():
                 created_at      TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS kv (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +336,430 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="LinkedIn Post Automation", lifespan=lifespan)
 
+# ---------------------------------------------------------------------------
+# HTML templates
+# ---------------------------------------------------------------------------
+_KNIGHTS_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@400;500;600&family=Share+Tech+Mono&display=swap');
+
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:       #08080a;
+  --panel:    #0d0d12;
+  --border:   rgba(227,160,40,.18);
+  --amber:    #e3a028;
+  --amber-dim:#a06810;
+  --green:    #28e060;
+  --red:      #e04028;
+  --blue:     #28a0e0;
+  --text:     #d4b896;
+  --text-dim: #7a6040;
+  --mono:     'Share Tech Mono', monospace;
+  --head:     'Orbitron', sans-serif;
+  --body:     'Rajdhani', sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--body);font-size:15px;line-height:1.5}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--amber-dim)}
+
+/* LAYOUT */
+.shell{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:220px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:0}
+.sidebar-logo{padding:24px 20px 16px;border-bottom:1px solid var(--border)}
+.sidebar-logo .wordmark{font-family:var(--head);font-size:.7rem;letter-spacing:.25em;text-transform:uppercase;color:var(--amber);line-height:1.2}
+.sidebar-logo .sub{font-size:.65rem;color:var(--text-dim);letter-spacing:.1em;margin-top:2px;font-family:var(--mono)}
+.sidebar-nav{flex:1;padding:16px 0}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-family:var(--head);font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;color:var(--text-dim);border-left:2px solid transparent;transition:all .15s}
+.nav-item:hover{color:var(--amber);background:rgba(227,160,40,.05)}
+.nav-item.active{color:var(--amber);border-left-color:var(--amber);background:rgba(227,160,40,.08)}
+.nav-icon{font-size:.9rem;width:18px;text-align:center}
+.sidebar-footer{padding:16px 20px;border-top:1px solid var(--border)}
+.run-btn{width:100%;background:var(--amber);color:#08080a;border:none;padding:10px;font-family:var(--head);font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;font-weight:700;transition:opacity .15s}
+.run-btn:hover{opacity:.85}
+.run-btn:disabled{opacity:.4;cursor:not-allowed}
+.run-status{font-family:var(--mono);font-size:.7rem;color:var(--text-dim);margin-top:8px;min-height:1rem;text-align:center;word-break:break-word}
+
+/* MAIN */
+.main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.topbar{padding:0 28px;height:48px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.topbar-left{font-family:var(--head);font-size:.7rem;letter-spacing:.2em;text-transform:uppercase;color:var(--amber)}
+.topbar-right{display:flex;align-items:center;gap:20px;font-family:var(--mono);font-size:.7rem;color:var(--text-dim)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px}
+.dot-green{background:var(--green);box-shadow:0 0 6px var(--green)}
+.dot-amber{background:var(--amber);animation:pulse 1.5s infinite}
+.dot-red{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.content{flex:1;overflow-y:auto;padding:28px}
+.section{display:none}
+.section.active{display:block}
+
+/* STAT CARDS */
+.stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}
+.stat-card{background:var(--panel);border:1px solid var(--border);padding:16px 20px}
+.stat-num{font-family:var(--head);font-size:1.8rem;font-weight:700;color:var(--amber);line-height:1}
+.stat-label{font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-top:4px;font-family:var(--mono)}
+
+/* TABLE */
+.table-wrap{background:var(--panel);border:1px solid var(--border);overflow:hidden}
+.table-header{padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.table-title{font-family:var(--head);font-size:.65rem;letter-spacing:.2em;text-transform:uppercase;color:var(--amber)}
+.table-refresh{background:none;border:1px solid var(--border);color:var(--text-dim);padding:4px 12px;font-family:var(--mono);font-size:.7rem;cursor:pointer;transition:all .15s}
+.table-refresh:hover{border-color:var(--amber);color:var(--amber)}
+table{width:100%;border-collapse:collapse}
+th{padding:9px 16px;text-align:left;font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border)}
+td{padding:11px 16px;font-family:var(--body);font-size:.9rem;border-bottom:1px solid rgba(227,160,40,.06)}
+tr:hover td{background:rgba(227,160,40,.03)}
+tr:last-child td{border-bottom:none}
+.badge{display:inline-block;padding:2px 10px;font-family:var(--mono);font-size:.65rem;letter-spacing:.08em;text-transform:uppercase;border:1px solid}
+.badge-pending{color:#f0b030;border-color:#f0b030;background:rgba(240,176,48,.08)}
+.badge-approved{color:var(--green);border-color:var(--green);background:rgba(40,224,96,.08)}
+.badge-rejected{color:var(--red);border-color:var(--red);background:rgba(224,64,40,.08)}
+.review-link{color:var(--amber);text-decoration:none;font-family:var(--mono);font-size:.75rem;letter-spacing:.05em;border-bottom:1px solid var(--amber-dim);transition:border-color .15s}
+.review-link:hover{border-color:var(--amber)}
+.empty-row td{text-align:center;color:var(--text-dim);font-family:var(--mono);font-size:.8rem;padding:48px}
+
+/* DEBUG */
+.debug-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.debug-card{background:var(--panel);border:1px solid var(--border);padding:0;overflow:hidden}
+.debug-card-head{padding:10px 16px;border-bottom:1px solid var(--border);font-family:var(--head);font-size:.62rem;letter-spacing:.18em;text-transform:uppercase;color:var(--amber)}
+.debug-card-body{padding:14px 16px;font-family:var(--mono);font-size:.75rem;color:var(--text-dim);line-height:1.6}
+.debug-card-body span{color:var(--text)}
+.notion-raw{background:var(--panel);border:1px solid var(--border);overflow:hidden}
+.notion-raw-head{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.notion-raw-title{font-family:var(--head);font-size:.62rem;letter-spacing:.18em;text-transform:uppercase;color:var(--amber)}
+pre.notion-pre{padding:16px;font-family:var(--mono);font-size:.72rem;color:var(--text-dim);overflow-x:auto;line-height:1.6;max-height:400px;overflow-y:auto}
+pre.notion-pre .key{color:#e3a028}
+pre.notion-pre .str{color:#c0dda0}
+pre.notion-pre .num{color:#80c0e0}
+
+/* SETTINGS */
+.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.settings-card{background:var(--panel);border:1px solid var(--border);overflow:hidden}
+.settings-card-head{padding:12px 18px;border-bottom:1px solid var(--border);font-family:var(--head);font-size:.62rem;letter-spacing:.18em;text-transform:uppercase;color:var(--amber)}
+.settings-card-body{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim)}
+.field-val{font-family:var(--mono);font-size:.8rem;color:var(--text);background:rgba(0,0,0,.3);border:1px solid var(--border);padding:7px 10px;word-break:break-all}
+.field-val.ok{border-color:rgba(40,224,96,.3);color:var(--green)}
+.field-val.missing{border-color:rgba(224,64,40,.3);color:var(--red)}
+.prompt-area{width:100%;background:rgba(0,0,0,.3);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:.75rem;padding:10px;resize:vertical;min-height:200px;line-height:1.55}
+.prompt-area:focus{outline:none;border-color:var(--amber)}
+.save-btn{align-self:flex-start;background:none;border:1px solid var(--amber);color:var(--amber);padding:7px 20px;font-family:var(--head);font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:all .15s}
+.save-btn:hover{background:rgba(227,160,40,.1)}
+.save-msg{font-family:var(--mono);font-size:.72rem;color:var(--green);display:none}
+.full-width{grid-column:1/-1}
+
+/* REVIEW PAGE */
+.review-shell{max-width:700px;margin:60px auto;padding:0 24px}
+.review-title{font-family:var(--head);font-size:.75rem;letter-spacing:.2em;text-transform:uppercase;color:var(--amber);margin-bottom:6px}
+.review-name{font-family:var(--body);font-size:1.2rem;color:var(--text);margin-bottom:20px}
+.review-post{white-space:pre-wrap;background:var(--panel);border:1px solid var(--border);padding:20px;font-family:var(--body);font-size:.95rem;line-height:1.7;color:var(--text);margin-bottom:24px}
+.review-actions{display:flex;gap:12px}
+.btn-approve{background:var(--amber);color:#08080a;border:none;padding:11px 28px;font-family:var(--head);font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;font-weight:700;transition:opacity .15s}
+.btn-approve:hover{opacity:.85}
+.btn-reject{background:none;border:1px solid var(--red);color:var(--red);padding:11px 28px;font-family:var(--head);font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:all .15s}
+.btn-reject:hover{background:rgba(224,64,40,.1)}
+
+@media(max-width:700px){
+  .sidebar{width:56px}
+  .sidebar-logo .wordmark,.sidebar-logo .sub,.nav-item span,.run-btn,.run-status,.sidebar-footer .run-btn-label{display:none}
+  .nav-item{justify-content:center;padding:12px}
+  .stat-row{grid-template-columns:1fr}
+  .debug-grid,.settings-grid{grid-template-columns:1fr}
+  .topbar-right{display:none}
+}
+"""
+
+_DASHBOARD_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AMEZCLA // LinkedIn OPS</title>
+<style>{css}</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="wordmark">AMEZCLA</div>
+    <div class="sub">LinkedIn OPS</div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-item active" data-section="posts" onclick="switchTab('posts',this)">
+      <span class="nav-icon">▤</span><span>Posts</span>
+    </div>
+    <div class="nav-item" data-section="debug" onclick="switchTab('debug',this)">
+      <span class="nav-icon">⬡</span><span>Debug</span>
+    </div>
+    <div class="nav-item" data-section="settings" onclick="switchTab('settings',this)">
+      <span class="nav-icon">⚙</span><span>Settings</span>
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    <button class="run-btn" id="runBtn" onclick="runNow()">▶ RUN NOW</button>
+    <div class="run-status" id="runStatus"></div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <div class="topbar">
+    <span class="topbar-left">Command // LinkedIn</span>
+    <div class="topbar-right">
+      <span><span class="dot dot-green"></span>ONLINE</span>
+      <span>NEXT RUN {next_run}</span>
+      <span id="clock"></span>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- POSTS -->
+    <div class="section active" id="section-posts">
+      <div class="stat-row">
+        <div class="stat-card">
+          <div class="stat-num" id="cnt-pending">—</div>
+          <div class="stat-label">Awaiting Review</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num" id="cnt-approved">—</div>
+          <div class="stat-label">Posted</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num" id="cnt-rejected">—</div>
+          <div class="stat-label">Rejected</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <div class="table-header">
+          <span class="table-title">Post Queue</span>
+          <button class="table-refresh" onclick="loadPosts()">↺ Refresh</button>
+        </div>
+        <table>
+          <thead><tr><th>Post</th><th>Status</th><th>Created</th><th></th></tr></thead>
+          <tbody id="posts-tbody"><tr class="empty-row"><td colspan="4">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- DEBUG -->
+    <div class="section" id="section-debug">
+      <div class="debug-grid">
+        <div class="debug-card">
+          <div class="debug-card-head">Config</div>
+          <div class="debug-card-body">
+            <div>DB ID &nbsp;&nbsp;<span>{notion_db_id}</span></div>
+            <div>LMTZ ID &nbsp;<span>{lmtz_page_id}</span></div>
+            <div>Schedule <span>{next_run} UTC</span></div>
+            <div>Base URL <span>{base_url}</span></div>
+          </div>
+        </div>
+        <div class="debug-card">
+          <div class="debug-card-head">API Status</div>
+          <div class="debug-card-body" id="api-status">Checking...</div>
+        </div>
+      </div>
+      <div class="notion-raw">
+        <div class="notion-raw-head">
+          <span class="notion-raw-title">Raw Notion Query (first 3 rows, no filter)</span>
+          <button class="table-refresh" onclick="loadDebug()">↺ Refresh</button>
+        </div>
+        <pre class="notion-pre" id="notion-raw-pre">Loading...</pre>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="section" id="section-settings">
+      <div class="settings-grid">
+        <div class="settings-card">
+          <div class="settings-card-head">Environment</div>
+          <div class="settings-card-body" id="env-fields">Loading...</div>
+        </div>
+        <div class="settings-card">
+          <div class="settings-card-head">Schedule</div>
+          <div class="settings-card-body">
+            <div class="field"><label>Run Time (UTC)</label><div class="field-val">{next_run}</div></div>
+            <div class="field"><label>Frequency</label><div class="field-val">Daily</div></div>
+            <div class="field"><label>To change</label><div class="field-val" style="font-size:.7rem">Update SCHEDULE_HOUR / SCHEDULE_MINUTE in Render env vars</div></div>
+          </div>
+        </div>
+        <div class="settings-card full-width">
+          <div class="settings-card-head">Brand Knowledge / System Prompt Override</div>
+          <div class="settings-card-body">
+            <div class="field">
+              <label>Append to Claude system prompt</label>
+              <textarea class="prompt-area" id="brand-knowledge" placeholder="Paste brand guidelines, tone of voice, examples..."></textarea>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="save-btn" onclick="saveBrandKnowledge()">Save</button>
+              <span class="save-msg" id="save-msg">Saved ✓</span>
+            </div>
+          </div>
+        </div>
+        <div class="settings-card full-width">
+          <div class="settings-card-head">LinkedIn Post Prompt</div>
+          <div class="settings-card-body">
+            <div class="field"><label>Active prompt template</label>
+              <pre style="font-family:var(--mono);font-size:.72rem;color:var(--text-dim);background:rgba(0,0,0,.3);border:1px solid var(--border);padding:12px;line-height:1.6;white-space:pre-wrap;max-height:300px;overflow-y:auto">{prompt_preview}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+</div><!-- /shell -->
+
+<script>
+function switchTab(name, el) {{
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  el.classList.add('active');
+  if (name === 'debug') loadDebug();
+  if (name === 'settings') loadSettings();
+}}
+
+// Clock
+function tick() {{
+  const el = document.getElementById('clock');
+  if (el) el.textContent = new Date().toUTCString().slice(17, 25) + ' UTC';
+}}
+tick(); setInterval(tick, 1000);
+
+// Posts
+async function loadPosts() {{
+  const res = await fetch('/api/posts');
+  const posts = await res.json();
+  const tbody = document.getElementById('posts-tbody');
+  let pending=0, approved=0, rejected=0;
+  if (!posts.length) {{
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No posts yet — click Run Now to generate one.</td></tr>';
+  }} else {{
+    tbody.innerHTML = posts.map(p => {{
+      if(p.status==='pending') pending++;
+      else if(p.status==='approved') approved++;
+      else rejected++;
+      const created = p.created_at ? p.created_at.slice(0,16).replace('T',' ') : '';
+      const action = p.status === 'pending'
+        ? `<a class="review-link" href="/review/${{p.id}}">Review →</a>` : '';
+      return `<tr>
+        <td>${{p.post_name || '(untitled)'}}</td>
+        <td><span class="badge badge-${{p.status}}">${{p.status}}</span></td>
+        <td style="font-family:var(--mono);font-size:.75rem;color:var(--text-dim)">${{created}}</td>
+        <td>${{action}}</td>
+      </tr>`;
+    }}).join('');
+    // recalculate after map
+    pending=posts.filter(p=>p.status==='pending').length;
+    approved=posts.filter(p=>p.status==='approved').length;
+    rejected=posts.filter(p=>p.status==='rejected').length;
+  }}
+  document.getElementById('cnt-pending').textContent = pending;
+  document.getElementById('cnt-approved').textContent = approved;
+  document.getElementById('cnt-rejected').textContent = rejected;
+}}
+
+// Debug
+async function loadDebug() {{
+  document.getElementById('notion-raw-pre').textContent = 'Loading...';
+  document.getElementById('api-status').innerHTML = 'Checking...';
+  try {{
+    const [health, notion] = await Promise.all([
+      fetch('/health').then(r => r.json()),
+      fetch('/debug-notion').then(r => r.json()),
+    ]);
+    document.getElementById('api-status').innerHTML =
+      `<div><span style="color:var(--green)">● ONLINE</span></div>` +
+      `<div>Time &nbsp;<span>${{health.time}}</span></div>` +
+      `<div>Posts &nbsp;<span>${{notion.length}} rows fetched</span></div>`;
+    document.getElementById('notion-raw-pre').textContent =
+      JSON.stringify(notion, null, 2);
+  }} catch(e) {{
+    document.getElementById('api-status').innerHTML = `<span style="color:var(--red)">Error: ${{e}}</span>`;
+    document.getElementById('notion-raw-pre').textContent = 'Failed to load.';
+  }}
+}}
+
+// Settings
+async function loadSettings() {{
+  const res = await fetch('/api/config');
+  const cfg = await res.json();
+  const container = document.getElementById('env-fields');
+  container.innerHTML = Object.entries(cfg).map(([k,v]) => {{
+    const cls = v === '✓ SET' ? 'ok' : v === '✗ MISSING' ? 'missing' : '';
+    return `<div class="field"><label>${{k}}</label><div class="field-val ${{cls}}">${{v}}</div></div>`;
+  }}).join('');
+
+  // Load saved brand knowledge
+  const bk = await fetch('/api/brand-knowledge').then(r=>r.json());
+  document.getElementById('brand-knowledge').value = bk.value || '';
+}}
+
+async function saveBrandKnowledge() {{
+  const val = document.getElementById('brand-knowledge').value;
+  await fetch('/api/brand-knowledge', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{value: val}})
+  }});
+  const msg = document.getElementById('save-msg');
+  msg.style.display = 'inline';
+  setTimeout(() => msg.style.display = 'none', 2000);
+}}
+
+// Run Now
+async function runNow() {{
+  const btn = document.getElementById('runBtn');
+  const status = document.getElementById('runStatus');
+  btn.disabled = true;
+  status.textContent = 'Running...';
+  try {{
+    const res = await fetch('/api/run', {{method:'POST'}});
+    const data = await res.json();
+    status.textContent = data.message || data.status;
+    loadPosts();
+  }} catch(e) {{
+    status.textContent = 'Error: ' + e;
+  }}
+  btn.disabled = false;
+}}
+
+// Init
+loadPosts();
+setInterval(loadPosts, 30000);
+</script>
+</body></html>"""
+
+_REVIEW_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Review // {post_name}</title>
+<style>{css}</style>
+</head>
+<body style="background:var(--bg)">
+<div class="review-shell">
+  <div class="review-title">LinkedIn Post Review</div>
+  <div class="review-name">{post_name}</div>
+  <div class="review-post">{post_content}</div>
+  <div class="review-actions">
+    <form method="POST" action="/review/{review_id}/approve">
+      <button class="btn-approve" type="submit">✓ Approve &amp; Post</button>
+    </form>
+    <form method="POST" action="/review/{review_id}/reject">
+      <button class="btn-reject" type="submit">✗ Reject</button>
+    </form>
+  </div>
+</div>
+</body></html>"""
+
 _REVIEW_HTML = """<!doctype html>
 <html lang="en">
 <head>
@@ -366,6 +796,79 @@ _REVIEW_HTML = """<!doctype html>
 </body></html>"""
 
 
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d}"
+    prompt_preview = LINKEDIN_PROMPT[:600] + "..."
+    return _DASHBOARD_HTML.format(
+        css=_KNIGHTS_CSS,
+        next_run=next_run,
+        notion_db_id=NOTION_DB_ID,
+        lmtz_page_id=LMTZ_PAGE_ID,
+        base_url=BASE_URL,
+        prompt_preview=prompt_preview,
+    )
+
+
+@app.get("/api/posts")
+async def api_posts():
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, post_name, status, created_at FROM pending_reviews ORDER BY created_at DESC LIMIT 50"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/config")
+async def api_config():
+    def masked(val):
+        if not val:
+            return "✗ MISSING"
+        if len(val) > 12:
+            return val[:6] + "..." + val[-4:]
+        return "✓ SET"
+
+    return {
+        "NOTION_TOKEN":              masked(os.environ.get("NOTION_TOKEN", "")),
+        "ANTHROPIC_API_KEY":         masked(os.environ.get("ANTHROPIC_API_KEY", "")),
+        "BLOTATO_API_KEY":           masked(os.environ.get("BLOTATO_API_KEY", "")),
+        "BLOTATO_LINKEDIN_ACCT_ID":  os.environ.get("BLOTATO_LINKEDIN_ACCOUNT_ID", "✗ MISSING"),
+        "SLACK_WEBHOOK_URL":         "✓ SET" if os.environ.get("SLACK_WEBHOOK_URL") else "— not set",
+        "BASE_URL":                  BASE_URL,
+        "SCHEDULE":                  f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d} UTC daily",
+        "NOTION_DB_ID":              NOTION_DB_ID,
+        "LMTZ_PAGE_ID":              LMTZ_PAGE_ID,
+    }
+
+
+@app.get("/api/brand-knowledge")
+async def get_brand_knowledge():
+    with get_db() as conn:
+        row = conn.execute("SELECT value FROM kv WHERE key='brand_knowledge'").fetchone()
+    return {"value": row["value"] if row else ""}
+
+
+@app.post("/api/brand-knowledge")
+async def save_brand_knowledge(payload: dict):
+    val = payload.get("value", "")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO kv(key,value) VALUES('brand_knowledge',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (val,)
+        )
+    return {"status": "saved"}
+
+
+@app.post("/api/run")
+async def api_run():
+    import traceback
+    try:
+        result = await run_workflow()
+        return {"status": "ok", "message": result}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "trace": traceback.format_exc()}
+
+
 @app.get("/review/{review_id}", response_class=HTMLResponse)
 async def review_page(review_id: str):
     with get_db() as conn:
@@ -376,10 +879,11 @@ async def review_page(review_id: str):
         raise HTTPException(404, "Review not found")
     if row["status"] != "pending":
         return HTMLResponse(
-            f'<div class="done" style="font-family:sans-serif;padding:60px;text-align:center">'
-            f'This post was already <strong>{row["status"]}</strong>.</div>'
+            f'<html><body style="background:#08080a;color:#d4b896;font-family:Rajdhani,sans-serif;text-align:center;padding:80px">'
+            f'<p>This post was already <strong>{row["status"]}</strong>.</p></body></html>'
         )
     return _REVIEW_HTML.format(
+        css=_KNIGHTS_CSS,
         review_id=review_id,
         post_name=row["post_name"],
         post_content=row["post_content"],
@@ -404,9 +908,9 @@ async def approve_post(review_id: str):
         )
 
     return HTMLResponse(
-        '<html><body style="font-family:sans-serif;text-align:center;padding:80px">'
-        "<h2>✅ Posted to LinkedIn!</h2>"
-        "<p>The Notion page has been updated to <em>Posted 🎉</em>.</p>"
+        '<html><body style="background:#08080a;color:#28e060;font-family:Rajdhani,sans-serif;text-align:center;padding:80px">'
+        "<h2>✓ Posted to LinkedIn</h2>"
+        "<p style='color:#7a6040;margin-top:8px'>Notion page updated to Posted 🎉</p>"
         "</body></html>"
     )
 
@@ -418,160 +922,14 @@ async def reject_post(review_id: str):
             "UPDATE pending_reviews SET status = 'rejected' WHERE id = ?", (review_id,)
         )
     return HTMLResponse(
-        '<html><body style="font-family:sans-serif;text-align:center;padding:80px">'
-        "<h2>❌ Post rejected.</h2>"
+        '<html><body style="background:#08080a;color:#e04028;font-family:Rajdhani,sans-serif;text-align:center;padding:80px">'
+        "<h2>✗ Post rejected</h2>"
         "</body></html>"
     )
 
 
-@app.get("/run-now")
-async def run_now():
-    """Manual trigger — hit this endpoint to run the workflow immediately."""
-    import traceback
-    try:
-        await run_workflow()
-        return {"status": "done"}
-    except Exception as e:
-        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
-
-
-@app.get("/pending")
-async def list_pending():
-    """List all pending reviews."""
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id, post_name, status, created_at FROM pending_reviews ORDER BY created_at DESC LIMIT 20"
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-@app.get("/", response_class=HTMLResponse)
-async def dashboard():
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id, post_name, status, created_at FROM pending_reviews ORDER BY created_at DESC LIMIT 50"
-        ).fetchall()
-    rows = [dict(r) for r in rows]
-
-    def badge(status):
-        colors = {"pending": "#f59e0b", "approved": "#10b981", "rejected": "#ef4444"}
-        return f'<span style="background:{colors.get(status,"#999")};color:#fff;padding:2px 10px;border-radius:20px;font-size:.75rem;font-weight:600">{status}</span>'
-
-    rows_html = ""
-    for r in rows:
-        created = r["created_at"][:16].replace("T", " ") if r["created_at"] else ""
-        action = f'<a href="/review/{r["id"]}" style="color:#0077b5;font-weight:600;text-decoration:none">Review →</a>' if r["status"] == "pending" else ""
-        rows_html += f"""
-        <tr>
-          <td style="padding:12px 16px">{r["post_name"] or "(untitled)"}</td>
-          <td style="padding:12px 16px">{badge(r["status"])}</td>
-          <td style="padding:12px 16px;color:#888;font-size:.85rem">{created}</td>
-          <td style="padding:12px 16px">{action}</td>
-        </tr>"""
-
-    if not rows:
-        rows_html = '<tr><td colspan="4" style="padding:40px;text-align:center;color:#aaa">No posts yet — click Run Now to generate one.</td></tr>'
-
-    next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d} UTC"
-
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LinkedIn Post Automation</title>
-<style>
-  *{{box-sizing:border-box;margin:0;padding:0}}
-  body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f6f9;color:#1a1a1a;min-height:100vh}}
-  .header{{background:#0077b5;color:#fff;padding:20px 32px;display:flex;align-items:center;justify-content:space-between}}
-  .header h1{{font-size:1.2rem;font-weight:700;letter-spacing:-.3px}}
-  .header .meta{{font-size:.85rem;opacity:.8}}
-  .container{{max-width:900px;margin:32px auto;padding:0 24px}}
-  .cards{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:28px}}
-  .card{{background:#fff;border-radius:10px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.07)}}
-  .card .num{{font-size:2rem;font-weight:700;line-height:1}}
-  .card .label{{font-size:.8rem;color:#888;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}}
-  .section{{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden}}
-  .section-header{{padding:16px 20px;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;justify-content:space-between}}
-  .section-header h2{{font-size:1rem;font-weight:600}}
-  table{{width:100%;border-collapse:collapse}}
-  thead tr{{background:#fafafa}}
-  thead th{{padding:10px 16px;text-align:left;font-size:.78rem;text-transform:uppercase;letter-spacing:.5px;color:#888;font-weight:600}}
-  tbody tr:not(:last-child){{border-bottom:1px solid #f5f5f5}}
-  tbody tr:hover{{background:#fafcff}}
-  .run-btn{{background:#0077b5;color:#fff;border:none;padding:9px 20px;border-radius:6px;font-size:.9rem;font-weight:600;cursor:pointer}}
-  .run-btn:hover{{background:#005f8e}}
-</style>
-</head>
-<body>
-<div class="header">
-  <h1>LinkedIn Post Automation</h1>
-  <span class="meta">Runs daily at {next_run}</span>
-</div>
-<div class="container">
-  <div class="cards">
-    <div class="card">
-      <div class="num">{len([r for r in rows if r["status"]=="pending"])}</div>
-      <div class="label">Awaiting Review</div>
-    </div>
-    <div class="card">
-      <div class="num">{len([r for r in rows if r["status"]=="approved"])}</div>
-      <div class="label">Posted</div>
-    </div>
-    <div class="card">
-      <div class="num">{len([r for r in rows if r["status"]=="rejected"])}</div>
-      <div class="label">Rejected</div>
-    </div>
-  </div>
-  <div class="section">
-    <div class="section-header">
-      <h2>Posts</h2>
-      <form method="POST" action="/run-now-ui">
-        <button class="run-btn" type="submit">▶ Run Now</button>
-      </form>
-    </div>
-    <table>
-      <thead><tr><th>Post</th><th>Status</th><th>Created</th><th></th></tr></thead>
-      <tbody>{rows_html}</tbody>
-    </table>
-  </div>
-</div>
-</body></html>"""
-
-
-@app.post("/run-now-ui", response_class=HTMLResponse)
-async def run_now_ui():
-    """Run workflow from dashboard button."""
-    import traceback
-    try:
-        result = await run_workflow()
-        msg = f"✅ {result}"
-        color = "#10b981"
-    except Exception as e:
-        msg = f"❌ {e}"
-        color = "#ef4444"
-    return HTMLResponse(
-        f'<html><head><meta http-equiv="refresh" content="4;url=/"></head>'
-        f'<body style="font-family:sans-serif;text-align:center;padding:80px;color:{color}">'
-        f'<p style="font-size:1.1rem;max-width:600px;margin:0 auto">{msg}</p>'
-        f'<p style="color:#aaa;margin-top:12px">Redirecting to dashboard...</p></body></html>'
-    )
-
-
-@app.get("/run-now")
-async def run_now():
-    """Manual trigger — hit this endpoint to run the workflow immediately."""
-    import traceback
-    try:
-        await run_workflow()
-        return {"status": "done"}
-    except Exception as e:
-        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
-
-
 @app.get("/debug-notion")
 async def debug_notion():
-    """Show first 3 raw Notion rows — helps identify correct property names/values."""
     url = f"https://api.notion.com/v1/databases/{NOTION_DB_ID}/query"
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, json={"page_size": 3}, headers=NOTION_HEADERS)
