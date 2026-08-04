@@ -868,7 +868,7 @@ _REVIEW_HTML = """<!doctype html>
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d}"
-    prompt_preview = LINKEDIN_PROMPT[:600] + "..."
+    prompt_preview = (LINKEDIN_PROMPT[:600] + "...").replace("{", "{{").replace("}", "}}")
     return _DASHBOARD_HTML.format(
         css=_KNIGHTS_CSS,
         next_run=next_run,
