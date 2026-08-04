@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: linkedin-post-automation
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: reviews-db
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /data/reviews.db
+      - key: NOTION_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: BLOTATO_API_KEY
+        sync: false
+      - key: BLOTATO_LINKEDIN_ACCOUNT_ID
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: BRAND_KNOWLEDGE
+        sync: false
+      - key: SCHEDULE_HOUR
+        value: "9"
+      - key: SCHEDULE_MINUTE
+        value: "30"
