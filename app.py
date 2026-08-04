@@ -444,6 +444,129 @@ async def list_pending():
     return [dict(r) for r in rows]
 
 
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, post_name, status, created_at FROM pending_reviews ORDER BY created_at DESC LIMIT 50"
+        ).fetchall()
+    rows = [dict(r) for r in rows]
+
+    def badge(status):
+        colors = {"pending": "#f59e0b", "approved": "#10b981", "rejected": "#ef4444"}
+        return f'<span style="background:{colors.get(status,"#999")};color:#fff;padding:2px 10px;border-radius:20px;font-size:.75rem;font-weight:600">{status}</span>'
+
+    rows_html = ""
+    for r in rows:
+        created = r["created_at"][:16].replace("T", " ") if r["created_at"] else ""
+        action = f'<a href="/review/{r["id"]}" style="color:#0077b5;font-weight:600;text-decoration:none">Review →</a>' if r["status"] == "pending" else ""
+        rows_html += f"""
+        <tr>
+          <td style="padding:12px 16px">{r["post_name"] or "(untitled)"}</td>
+          <td style="padding:12px 16px">{badge(r["status"])}</td>
+          <td style="padding:12px 16px;color:#888;font-size:.85rem">{created}</td>
+          <td style="padding:12px 16px">{action}</td>
+        </tr>"""
+
+    if not rows:
+        rows_html = '<tr><td colspan="4" style="padding:40px;text-align:center;color:#aaa">No posts yet — click Run Now to generate one.</td></tr>'
+
+    next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d} UTC"
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LinkedIn Post Automation</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f6f9;color:#1a1a1a;min-height:100vh}}
+  .header{{background:#0077b5;color:#fff;padding:20px 32px;display:flex;align-items:center;justify-content:space-between}}
+  .header h1{{font-size:1.2rem;font-weight:700;letter-spacing:-.3px}}
+  .header .meta{{font-size:.85rem;opacity:.8}}
+  .container{{max-width:900px;margin:32px auto;padding:0 24px}}
+  .cards{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:28px}}
+  .card{{background:#fff;border-radius:10px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.07)}}
+  .card .num{{font-size:2rem;font-weight:700;line-height:1}}
+  .card .label{{font-size:.8rem;color:#888;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}}
+  .section{{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden}}
+  .section-header{{padding:16px 20px;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;justify-content:space-between}}
+  .section-header h2{{font-size:1rem;font-weight:600}}
+  table{{width:100%;border-collapse:collapse}}
+  thead tr{{background:#fafafa}}
+  thead th{{padding:10px 16px;text-align:left;font-size:.78rem;text-transform:uppercase;letter-spacing:.5px;color:#888;font-weight:600}}
+  tbody tr:not(:last-child){{border-bottom:1px solid #f5f5f5}}
+  tbody tr:hover{{background:#fafcff}}
+  .run-btn{{background:#0077b5;color:#fff;border:none;padding:9px 20px;border-radius:6px;font-size:.9rem;font-weight:600;cursor:pointer}}
+  .run-btn:hover{{background:#005f8e}}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>LinkedIn Post Automation</h1>
+  <span class="meta">Runs daily at {next_run}</span>
+</div>
+<div class="container">
+  <div class="cards">
+    <div class="card">
+      <div class="num">{len([r for r in rows if r["status"]=="pending"])}</div>
+      <div class="label">Awaiting Review</div>
+    </div>
+    <div class="card">
+      <div class="num">{len([r for r in rows if r["status"]=="approved"])}</div>
+      <div class="label">Posted</div>
+    </div>
+    <div class="card">
+      <div class="num">{len([r for r in rows if r["status"]=="rejected"])}</div>
+      <div class="label">Rejected</div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-header">
+      <h2>Posts</h2>
+      <form method="POST" action="/run-now-ui">
+        <button class="run-btn" type="submit">▶ Run Now</button>
+      </form>
+    </div>
+    <table>
+      <thead><tr><th>Post</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <tbody>{rows_html}</tbody>
+    </table>
+  </div>
+</div>
+</body></html>"""
+
+
+@app.post("/run-now-ui", response_class=HTMLResponse)
+async def run_now_ui():
+    """Run workflow from dashboard button."""
+    import traceback
+    try:
+        await run_workflow()
+        msg = "✅ Workflow ran — check the table below for your new post."
+        color = "#10b981"
+    except Exception as e:
+        msg = f"❌ Error: {e}"
+        color = "#ef4444"
+    return HTMLResponse(
+        f'<html><head><meta http-equiv="refresh" content="2;url=/"></head>'
+        f'<body style="font-family:sans-serif;text-align:center;padding:80px;color:{color}">'
+        f'<p style="font-size:1.1rem">{msg}</p><p style="color:#aaa;margin-top:8px">Redirecting...</p></body></html>'
+    )
+
+
+@app.get("/run-now")
+async def run_now():
+    """Manual trigger — hit this endpoint to run the workflow immediately."""
+    import traceback
+    try:
+        await run_workflow()
+        return {"status": "done"}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
