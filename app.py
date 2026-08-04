@@ -569,6 +569,25 @@ async def run_now():
         return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
 
 
+@app.get("/debug-notion")
+async def debug_notion():
+    """Show first 3 raw Notion rows — helps identify correct property names/values."""
+    url = f"https://api.notion.com/v1/databases/{NOTION_DB_ID}/query"
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, json={"page_size": 3}, headers=NOTION_HEADERS)
+        r.raise_for_status()
+    results = r.json().get("results", [])
+    out = []
+    for page in results:
+        props = {}
+        for name, prop in page.get("properties", {}).items():
+            ptype = prop.get("type")
+            val = prop.get(ptype)
+            props[name] = {"type": ptype, "raw": val}
+        out.append({"id": page["id"], "properties": props})
+    return out
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
