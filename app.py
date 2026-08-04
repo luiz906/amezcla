@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import uuid
@@ -8,7 +9,7 @@ import httpx
 from anthropic import Anthropic
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 # ---------------------------------------------------------------------------
 # Config (all via environment variables)
@@ -337,7 +338,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="LinkedIn Post Automation", lifespan=lifespan)
 
 # ---------------------------------------------------------------------------
-# HTML templates
+# HTML — CSS served as separate endpoint, JS uses real braces (no format())
 # ---------------------------------------------------------------------------
 _KNIGHTS_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@400;500;600&family=Share+Tech+Mono&display=swap');
@@ -485,7 +486,7 @@ _DASHBOARD_HTML = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AMEZCLA // LinkedIn OPS</title>
-<style>{css}</style>
+<style>__CSS__</style>
 </head>
 <body>
 <div class="shell">
@@ -519,7 +520,7 @@ _DASHBOARD_HTML = """<!doctype html>
     <span class="topbar-left">Command // LinkedIn</span>
     <div class="topbar-right">
       <span><span class="dot dot-green"></span>ONLINE</span>
-      <span>NEXT RUN {next_run}</span>
+      <span>NEXT RUN __NEXT_RUN__</span>
       <span id="clock"></span>
     </div>
   </div>
@@ -560,10 +561,10 @@ _DASHBOARD_HTML = """<!doctype html>
         <div class="debug-card">
           <div class="debug-card-head">Config</div>
           <div class="debug-card-body">
-            <div>DB ID &nbsp;&nbsp;<span>{notion_db_id}</span></div>
-            <div>LMTZ ID &nbsp;<span>{lmtz_page_id}</span></div>
-            <div>Schedule <span>{next_run} UTC</span></div>
-            <div>Base URL <span>{base_url}</span></div>
+            <div>DB ID &nbsp;&nbsp;<span>__NOTION_DB_ID__</span></div>
+            <div>LMTZ ID &nbsp;<span>__LMTZ_PAGE_ID__</span></div>
+            <div>Schedule <span>__NEXT_RUN__ UTC</span></div>
+            <div>Base URL <span>__BASE_URL__</span></div>
           </div>
         </div>
         <div class="debug-card">
@@ -590,7 +591,7 @@ _DASHBOARD_HTML = """<!doctype html>
         <div class="settings-card">
           <div class="settings-card-head">Schedule</div>
           <div class="settings-card-body">
-            <div class="field"><label>Run Time (UTC)</label><div class="field-val">{next_run}</div></div>
+            <div class="field"><label>Run Time (UTC)</label><div class="field-val">__NEXT_RUN__</div></div>
             <div class="field"><label>Frequency</label><div class="field-val">Daily</div></div>
             <div class="field"><label>To change</label><div class="field-val" style="font-size:.7rem">Update SCHEDULE_HOUR / SCHEDULE_MINUTE in Render env vars</div></div>
           </div>
@@ -612,7 +613,7 @@ _DASHBOARD_HTML = """<!doctype html>
           <div class="settings-card-head">LinkedIn Post Prompt</div>
           <div class="settings-card-body">
             <div class="field"><label>Active prompt template</label>
-              <pre style="font-family:var(--mono);font-size:.72rem;color:var(--text-dim);background:rgba(0,0,0,.3);border:1px solid var(--border);padding:12px;line-height:1.6;white-space:pre-wrap;max-height:300px;overflow-y:auto">{prompt_preview}</pre>
+              <pre style="font-family:var(--mono);font-size:.72rem;color:var(--text-dim);background:rgba(0,0,0,.3);border:1px solid var(--border);padding:12px;line-height:1.6;white-space:pre-wrap;max-height:300px;overflow-y:auto">__PROMPT_PREVIEW__</pre>
             </div>
           </div>
         </div>
@@ -641,124 +642,122 @@ _DASHBOARD_HTML = """<!doctype html>
 </div>
 
 <script>
-function switchTab(name, el) {{
+function switchTab(name, el) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('section-' + name).classList.add('active');
   el.classList.add('active');
   if (name === 'debug') loadDebug();
   if (name === 'settings') loadSettings();
-}}
+}
 
 // Clock
-function tick() {{
+function tick() {
   const el = document.getElementById('clock');
   if (el) el.textContent = new Date().toUTCString().slice(17, 25) + ' UTC';
-}}
+}
 tick(); setInterval(tick, 1000);
 
 // Posts
-async function loadPosts() {{
+async function loadPosts() {
   const res = await fetch('/api/posts');
   const posts = await res.json();
   const tbody = document.getElementById('posts-tbody');
   let pending=0, approved=0, rejected=0;
-  if (!posts.length) {{
+  if (!posts.length) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No posts yet — click Run Now to generate one.</td></tr>';
-  }} else {{
-    tbody.innerHTML = posts.map(p => {{
+  } else {
+    tbody.innerHTML = posts.map(p => {
       if(p.status==='pending') pending++;
       else if(p.status==='approved') approved++;
       else rejected++;
       const created = p.created_at ? p.created_at.slice(0,16).replace('T',' ') : '';
       const action = p.status === 'pending'
-        ? `<a class="review-link" href="#" onclick="openReview('${{p.id}}','${{(p.post_name||'').replace(/'/g,"\\'")}}}');return false">Review →</a>` : '';
+        ? `<a class="review-link" href="#" onclick="openReview('${p.id}','${(p.post_name||'').replace(/'/g,"\\'")}');return false">Review →</a>` : '';
       return `<tr>
-        <td>${{p.post_name || '(untitled)'}}</td>
-        <td><span class="badge badge-${{p.status}}">${{p.status}}</span></td>
-        <td style="font-family:var(--mono);font-size:.75rem;color:var(--text-dim)">${{created}}</td>
-        <td>${{action}}</td>
+        <td>${p.post_name || '(untitled)'}</td>
+        <td><span class="badge badge-${p.status}">${p.status}</span></td>
+        <td style="font-family:var(--mono);font-size:.75rem;color:var(--text-dim)">${created}</td>
+        <td>${action}</td>
       </tr>`;
-    }}).join('');
-    // recalculate after map
+    }).join('');
     pending=posts.filter(p=>p.status==='pending').length;
     approved=posts.filter(p=>p.status==='approved').length;
     rejected=posts.filter(p=>p.status==='rejected').length;
-  }}
+  }
   document.getElementById('cnt-pending').textContent = pending;
   document.getElementById('cnt-approved').textContent = approved;
   document.getElementById('cnt-rejected').textContent = rejected;
-}}
+}
 
 // Debug
-async function loadDebug() {{
+async function loadDebug() {
   document.getElementById('notion-raw-pre').textContent = 'Loading...';
   document.getElementById('api-status').innerHTML = 'Checking...';
-  try {{
+  try {
     const [health, notion] = await Promise.all([
       fetch('/health').then(r => r.json()),
       fetch('/debug-notion').then(r => r.json()),
     ]);
     document.getElementById('api-status').innerHTML =
       `<div><span style="color:var(--green)">● ONLINE</span></div>` +
-      `<div>Time &nbsp;<span>${{health.time}}</span></div>` +
-      `<div>Posts &nbsp;<span>${{notion.length}} rows fetched</span></div>`;
+      `<div>Time &nbsp;<span>${health.time}</span></div>` +
+      `<div>Posts &nbsp;<span>${notion.length} rows fetched</span></div>`;
     document.getElementById('notion-raw-pre').textContent =
       JSON.stringify(notion, null, 2);
-  }} catch(e) {{
-    document.getElementById('api-status').innerHTML = `<span style="color:var(--red)">Error: ${{e}}</span>`;
+  } catch(e) {
+    document.getElementById('api-status').innerHTML = `<span style="color:var(--red)">Error: ${e}</span>`;
     document.getElementById('notion-raw-pre').textContent = 'Failed to load.';
-  }}
-}}
+  }
+}
 
 // Settings
-async function loadSettings() {{
+async function loadSettings() {
   const res = await fetch('/api/config');
   const cfg = await res.json();
   const container = document.getElementById('env-fields');
-  container.innerHTML = Object.entries(cfg).map(([k,v]) => {{
+  container.innerHTML = Object.entries(cfg).map(([k,v]) => {
     const cls = v === '✓ SET' ? 'ok' : v === '✗ MISSING' ? 'missing' : '';
-    return `<div class="field"><label>${{k}}</label><div class="field-val ${{cls}}">${{v}}</div></div>`;
-  }}).join('');
+    return `<div class="field"><label>${k}</label><div class="field-val ${cls}">${v}</div></div>`;
+  }).join('');
 
-  // Load saved brand knowledge
   const bk = await fetch('/api/brand-knowledge').then(r=>r.json());
   document.getElementById('brand-knowledge').value = bk.value || '';
-}}
+}
 
-async function saveBrandKnowledge() {{
+async function saveBrandKnowledge() {
   const val = document.getElementById('brand-knowledge').value;
-  await fetch('/api/brand-knowledge', {{
+  await fetch('/api/brand-knowledge', {
     method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{value: val}})
-  }});
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({value: val})
+  });
   const msg = document.getElementById('save-msg');
   msg.style.display = 'inline';
   setTimeout(() => msg.style.display = 'none', 2000);
-}}
+}
 
 // Run Now
-async function runNow() {{
+async function runNow() {
   const btn = document.getElementById('runBtn');
   const status = document.getElementById('runStatus');
   btn.disabled = true;
   status.textContent = 'Running...';
-  try {{
-    const res = await fetch('/api/run', {{method:'POST'}});
+  try {
+    const res = await fetch('/api/run', {method:'POST'});
     const data = await res.json();
     status.textContent = data.message || data.status;
     loadPosts();
-  }} catch(e) {{
+  } catch(e) {
     status.textContent = 'Error: ' + e;
-  }}
+  }
   btn.disabled = false;
-}}
+}
 
 // Modal
 let _activeReviewId = null;
 
-async function openReview(id, name) {{
+async function openReview(id, name) {
   _activeReviewId = id;
   document.getElementById('modal-name').textContent = name;
   document.getElementById('modal-post').textContent = 'Loading...';
@@ -769,35 +768,34 @@ async function openReview(id, name) {{
   const res = await fetch('/api/review/' + id);
   const data = await res.json();
   document.getElementById('modal-post').textContent = data.post_content || '(empty)';
-}}
+}
 
-function closeModal() {{
+function closeModal() {
   document.getElementById('modal').classList.remove('open');
   _activeReviewId = null;
-}}
+}
 
-async function submitReview(action) {{
+async function submitReview(action) {
   if (!_activeReviewId) return;
   document.getElementById('modal-approve').disabled = true;
   document.getElementById('modal-reject').disabled = true;
   document.getElementById('modal-msg').textContent = 'Processing...';
-  const res = await fetch('/review/' + _activeReviewId + '/' + action, {{method:'POST'}});
+  const res = await fetch('/review/' + _activeReviewId + '/' + action, {method:'POST'});
   const text = await res.text();
-  // check for error in response
-  if (text.includes('error') || text.includes('Error')) {{
+  if (text.includes('error') || text.includes('Error')) {
     document.getElementById('modal-msg').style.color = 'var(--red)';
     document.getElementById('modal-msg').textContent = 'Error — see details below';
     document.getElementById('modal-post').textContent = text.replace(/<[^>]*>/g,'').trim();
     document.getElementById('modal-approve').disabled = false;
     document.getElementById('modal-reject').disabled = false;
-  }} else {{
+  } else {
     document.getElementById('modal-msg').style.color = 'var(--green)';
     document.getElementById('modal-msg').textContent = action === 'approve' ? '✓ Posted to LinkedIn!' : '✗ Rejected';
-    setTimeout(() => {{ closeModal(); loadPosts(); }}, 1500);
-  }}
-}}
+    setTimeout(() => { closeModal(); loadPosts(); }, 1500);
+  }
+}
 
-document.addEventListener('keydown', e => {{ if(e.key==='Escape') closeModal(); }});
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeModal(); });
 
 // Init
 loadPosts();
@@ -810,80 +808,39 @@ _REVIEW_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Review // {post_name}</title>
-<style>{css}</style>
+<title>Review // __POST_NAME__</title>
+<style>__CSS__</style>
 </head>
 <body style="background:var(--bg)">
-<div class="review-shell">
-  <div class="review-title">LinkedIn Post Review</div>
-  <div class="review-name">{post_name}</div>
-  <div class="review-post">{post_content}</div>
-  <div class="review-actions">
-    <form method="POST" action="/review/{review_id}/approve">
+<div style="max-width:700px;margin:60px auto;padding:0 28px">
+  <div style="font-family:var(--head);font-size:.65rem;letter-spacing:.2em;text-transform:uppercase;color:var(--amber);margin-bottom:12px">LinkedIn Post Review</div>
+  <div style="font-family:var(--body);font-size:1.1rem;color:var(--text);margin-bottom:20px">__POST_NAME__</div>
+  <div style="white-space:pre-wrap;background:rgba(0,0,0,.3);border:1px solid var(--border);padding:20px;font-family:var(--body);font-size:.9rem;line-height:1.7;color:var(--text);margin-bottom:20px">__POST_CONTENT__</div>
+  <div style="display:flex;gap:12px">
+    <form method="POST" action="/review/__REVIEW_ID__/approve">
       <button class="btn-approve" type="submit">✓ Approve &amp; Post</button>
     </form>
-    <form method="POST" action="/review/{review_id}/reject">
+    <form method="POST" action="/review/__REVIEW_ID__/reject">
       <button class="btn-reject" type="submit">✗ Reject</button>
     </form>
   </div>
 </div>
 </body></html>"""
 
-_REVIEW_HTML = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Review: {post_name}</title>
-<style>
-  body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        max-width:700px;margin:48px auto;padding:0 20px;color:#1a1a1a}}
-  h1{{font-size:1.4rem;margin-bottom:4px}}
-  .post{{white-space:pre-wrap;background:#f7f7f7;border:1px solid #e0e0e0;
-         border-radius:8px;padding:20px;line-height:1.65;font-size:.95rem;
-         margin:20px 0}}
-  .actions{{display:flex;gap:12px;margin-top:24px}}
-  button{{padding:12px 28px;border:none;border-radius:6px;font-size:1rem;
-          cursor:pointer;font-weight:600}}
-  .approve{{background:#0077b5;color:#fff}}
-  .reject {{background:#e74c3c;color:#fff}}
-  .done{{padding:60px 0;text-align:center;font-size:1.2rem}}
-</style>
-</head>
-<body>
-<h1>LinkedIn Post Review</h1>
-<p style="color:#555;margin-top:4px">{post_name}</p>
-<div class="post">{post_content}</div>
-<div class="actions">
-  <form method="POST" action="/review/{review_id}/approve">
-    <button class="approve" type="submit">✓ Approve &amp; Post to LinkedIn</button>
-  </form>
-  <form method="POST" action="/review/{review_id}/reject">
-    <button class="reject" type="submit">✗ Reject</button>
-  </form>
-</div>
-</body></html>"""
-
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    import traceback
-    try:
-        next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d}"
-        prompt_preview = (LINKEDIN_PROMPT[:600] + "...").replace("{", "{{").replace("}", "}}")
-        return _DASHBOARD_HTML.format(
-            css=_KNIGHTS_CSS,
-            next_run=next_run,
-            notion_db_id=NOTION_DB_ID,
-            lmtz_page_id=LMTZ_PAGE_ID,
-            base_url=BASE_URL,
-            prompt_preview=prompt_preview,
-        )
-    except Exception as e:
-        return HTMLResponse(
-            f"<pre style='background:#000;color:#e04028;padding:20px'>{traceback.format_exc()}</pre>",
-            status_code=200
-        )
+    next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d}"
+    prompt_preview = LINKEDIN_PROMPT[:600] + "..."
+    return (
+        _DASHBOARD_HTML
+        .replace("__CSS__", _KNIGHTS_CSS)
+        .replace("__NEXT_RUN__", next_run)
+        .replace("__NOTION_DB_ID__", NOTION_DB_ID)
+        .replace("__LMTZ_PAGE_ID__", LMTZ_PAGE_ID)
+        .replace("__BASE_URL__", BASE_URL)
+        .replace("__PROMPT_PREVIEW__", prompt_preview)
+    )
 
 
 @app.get("/api/posts")
@@ -969,11 +926,12 @@ async def review_page(review_id: str):
             f'<html><body style="background:#08080a;color:#d4b896;font-family:Rajdhani,sans-serif;text-align:center;padding:80px">'
             f'<p>This post was already <strong>{row["status"]}</strong>.</p></body></html>'
         )
-    return _REVIEW_HTML.format(
-        css=_KNIGHTS_CSS,
-        review_id=review_id,
-        post_name=row["post_name"],
-        post_content=row["post_content"],
+    return (
+        _REVIEW_HTML
+        .replace("__CSS__", _KNIGHTS_CSS)
+        .replace("__REVIEW_ID__", review_id)
+        .replace("__POST_NAME__", row["post_name"] or "")
+        .replace("__POST_CONTENT__", row["post_content"] or "")
     )
 
 
