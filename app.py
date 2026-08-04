@@ -76,8 +76,10 @@ async def find_notion_page() -> dict | None:
     url = f"https://api.notion.com/v1/databases/{NOTION_DB_ID}/query"
     body = {
         "filter": {
-            "property": "Status",
-            "status": {"equals": "Not Started"},
+            "and": [
+                {"property": "Status", "status": {"equals": "Not Started"}},
+                {"property": "ClientsOS", "relation": {"contains": LMTZ_PAGE_ID}},
+            ]
         },
         "page_size": 1,
     }
