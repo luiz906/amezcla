@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, Response
 # ---------------------------------------------------------------------------
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 NOTION_DB_ID = "13ccc694-e848-80ff-8543-fb2b57e1981a"
-LMTZ_PAGE_ID = "157cc694-e848-81ad-87aa-000b8ea1d01e"
+LMTZ_PAGE_ID = "17ecc694-e848-808f-84fd-d2f069a86ec9"
 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 
