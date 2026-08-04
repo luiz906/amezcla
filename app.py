@@ -426,8 +426,12 @@ async def reject_post(review_id: str):
 @app.get("/run-now")
 async def run_now():
     """Manual trigger — hit this endpoint to run the workflow immediately."""
-    await run_workflow()
-    return {"status": "done"}
+    import traceback
+    try:
+        await run_workflow()
+        return {"status": "done"}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
 
 
 @app.get("/pending")
