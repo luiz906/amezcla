@@ -892,6 +892,7 @@ async def review_page(review_id: str):
 
 @app.post("/review/{review_id}/approve", response_class=HTMLResponse)
 async def approve_post(review_id: str):
+    import traceback
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM pending_reviews WHERE id = ?", (review_id,)
@@ -899,8 +900,22 @@ async def approve_post(review_id: str):
         if not row or row["status"] != "pending":
             raise HTTPException(400, "Not found or already processed")
 
-    await post_to_linkedin_via_blotato(row["post_content"])
-    await mark_notion_page_posted(row["notion_page_id"])
+    try:
+        await post_to_linkedin_via_blotato(row["post_content"])
+    except Exception as e:
+        return HTMLResponse(
+            f'<html><body style="background:#08080a;color:#e04028;font-family:monospace;padding:40px;white-space:pre-wrap">'
+            f'<b>Blotato error:</b>\n{e}\n\n{traceback.format_exc()}</body></html>',
+            status_code=200
+        )
+    try:
+        await mark_notion_page_posted(row["notion_page_id"])
+    except Exception as e:
+        return HTMLResponse(
+            f'<html><body style="background:#08080a;color:#e04028;font-family:monospace;padding:40px;white-space:pre-wrap">'
+            f'<b>Notion update error (post WAS sent to LinkedIn):</b>\n{e}</body></html>',
+            status_code=200
+        )
 
     with get_db() as conn:
         conn.execute(
