@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import httpx
 from anthropic import Anthropic
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 # ---------------------------------------------------------------------------
@@ -487,7 +487,8 @@ input:checked + .toggle-slider:before{transform:translateX(18px);background:var(
 .modal-close{background:none;border:none;color:var(--text-dim);font-size:1.2rem;cursor:pointer;line-height:1;padding:0 4px}
 .modal-close:hover{color:var(--amber)}
 .modal-name{padding:14px 20px 0;font-family:var(--body);font-size:1.05rem;color:var(--text);flex-shrink:0}
-.modal-post{flex:1;overflow-y:auto;margin:12px 20px;white-space:pre-wrap;background:rgba(0,0,0,.3);border:1px solid var(--border);padding:16px;font-family:var(--body);font-size:.9rem;line-height:1.7;color:var(--text)}
+.modal-post{flex:1;overflow-y:auto;margin:12px 20px;white-space:pre-wrap;background:rgba(0,0,0,.3);border:1px solid var(--border);padding:16px;font-family:var(--body);font-size:.9rem;line-height:1.7;color:var(--text);resize:none;width:calc(100% - 40px);outline:none;min-height:120px}
+.modal-post:focus{border-color:rgba(227,160,40,.4)}
 .modal-actions{padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;flex-shrink:0}
 .btn-approve{background:var(--amber);color:#08080a;border:none;padding:10px 24px;font-family:var(--head);font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;font-weight:700;transition:opacity .15s}
 .btn-approve:hover{opacity:.85}
@@ -683,7 +684,7 @@ _DASHBOARD_HTML = """<!doctype html>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-name" id="modal-name"></div>
-    <div class="modal-post" id="modal-post"></div>
+    <textarea class="modal-post" id="modal-post" spellcheck="true"></textarea>
     <div class="modal-actions">
       <button class="btn-approve" id="modal-approve" onclick="submitReview('approve')">✓ Approve &amp; Post</button>
       <button class="btn-reject"  id="modal-reject"  onclick="submitReview('reject')">✗ Reject</button>
@@ -840,14 +841,14 @@ let _activeReviewId = null;
 async function openReview(id, name) {
   _activeReviewId = id;
   document.getElementById('modal-name').textContent = name;
-  document.getElementById('modal-post').textContent = 'Loading...';
+  document.getElementById('modal-post').value = 'Loading...';
   document.getElementById('modal-msg').textContent = '';
   document.getElementById('modal-approve').disabled = false;
   document.getElementById('modal-reject').disabled = false;
   document.getElementById('modal').classList.add('open');
   const res = await fetch('/api/review/' + id);
   const data = await res.json();
-  document.getElementById('modal-post').textContent = data.post_content || '(empty)';
+  document.getElementById('modal-post').value = data.post_content || '(empty)';
 }
 
 function closeModal() {
@@ -860,12 +861,17 @@ async function submitReview(action) {
   document.getElementById('modal-approve').disabled = true;
   document.getElementById('modal-reject').disabled = true;
   document.getElementById('modal-msg').textContent = 'Processing...';
-  const res = await fetch('/review/' + _activeReviewId + '/' + action, {method:'POST'});
+  const content = document.getElementById('modal-post').value;
+  const res = await fetch('/review/' + _activeReviewId + '/' + action, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content})
+  });
   const text = await res.text();
   if (text.includes('error') || text.includes('Error')) {
     document.getElementById('modal-msg').style.color = 'var(--red)';
     document.getElementById('modal-msg').textContent = 'Error — see details below';
-    document.getElementById('modal-post').textContent = text.replace(/<[^>]*>/g,'').trim();
+    document.getElementById('modal-post').value = text.replace(/<[^>]*>/g,'').trim();
     document.getElementById('modal-approve').disabled = false;
     document.getElementById('modal-reject').disabled = false;
   } else {
@@ -1032,7 +1038,7 @@ async def review_page(review_id: str):
 
 
 @app.post("/review/{review_id}/approve", response_class=HTMLResponse)
-async def approve_post(review_id: str):
+async def approve_post(review_id: str, request: Request):
     import traceback
     with get_db() as conn:
         row = conn.execute(
@@ -1041,8 +1047,22 @@ async def approve_post(review_id: str):
         if not row or row["status"] != "pending":
             raise HTTPException(400, "Not found or already processed")
 
+    body = {}
     try:
-        await post_to_linkedin_via_blotato(row["post_content"])
+        body = await request.json()
+    except Exception:
+        pass
+    final_content = body.get("content", "").strip() or row["post_content"]
+
+    if body.get("content", "").strip():
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE pending_reviews SET post_content = ? WHERE id = ?",
+                (final_content, review_id)
+            )
+
+    try:
+        await post_to_linkedin_via_blotato(final_content)
     except Exception as e:
         return HTMLResponse(
             f'<html><body style="background:#08080a;color:#e04028;font-family:monospace;padding:40px;white-space:pre-wrap">'
