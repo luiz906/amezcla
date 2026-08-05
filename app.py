@@ -214,7 +214,12 @@ Page content:
 """
 
 
+MOCK_POST = os.environ.get("MOCK_POST", "")
+
+
 def generate_linkedin_post(post_name: str, properties: str, content: str) -> str:
+    if MOCK_POST:
+        return MOCK_POST
     client = Anthropic(api_key=ANTHROPIC_API_KEY)
     system = "You are a social media content expert and brand designer for Amezcla."
     if BRAND_KNOWLEDGE:
