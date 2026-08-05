@@ -409,9 +409,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--b
 .dot-amber{background:var(--amber);animation:pulse 1.5s infinite}
 .dot-red{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.content{flex:1;overflow-y:auto;padding:28px}
+.content{flex:1;overflow-y:auto;padding:28px;display:flex;flex-direction:column}
 .section{display:none}
 .section.active{display:block}
+#section-flow{flex:1;display:flex;flex-direction:column;overflow:hidden;margin:-28px}
 
 /* STAT CARDS */
 .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}
@@ -499,7 +500,7 @@ input:checked + .toggle-slider:before{transform:translateX(18px);background:var(
 .modal-msg{font-family:var(--mono);font-size:.75rem;color:var(--text-dim);margin-left:auto;align-self:center}
 
 /* FLOW CANVAS */
-.flow-outer{display:flex;flex-direction:column;height:100%;margin:-28px}
+.flow-outer{flex:1;display:flex;flex-direction:column}
 .flow-toolbar{padding:10px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0}
 .flow-tool-btn{background:none;border:1px solid var(--border);color:var(--text-dim);padding:4px 14px;font-family:var(--mono);font-size:.68rem;cursor:pointer;transition:all .15s}
 .flow-tool-btn:hover{border-color:var(--amber);color:var(--amber)}
