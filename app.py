@@ -996,7 +996,7 @@ const NODE_CFG = {
     fields:[{l:'Database',v:'__NOTION_DB_ID__'},{l:'Status filter',v:'Not Started'},{l:'Client filter',v:'LMTZ'}] },
   'claude':     { desc:'Generates LinkedIn post copy using Claude Haiku 4.5.',
     fields:[{l:'Model',v:'claude-haiku-4-5-20251001'},{l:'Prompt',v:'Edit in Settings tab'}],
-    btn:{label:'Open Settings →', fn:'switchTab("settings",document.querySelector(\'[data-section="settings"]\'))'} },
+    btn:{label:'Open Settings →', fn:'goToSettings'} },
   'review':     { desc:'Pauses for human review. Edit the copy inline in the modal before approving.',
     fields:[{l:'UI',v:'Dashboard modal (editable)'}], dynamic:'pending' },
   'blotato':    { desc:'Posts the approved copy to LinkedIn via the Blotato API.',
@@ -1149,10 +1149,15 @@ async function openCfg(id) {
     } catch(e) {}
   }
   if(cfg.btn) {
-    html+=`<button class="fcfg-btn" onclick="${cfg.btn.fn}">${cfg.btn.label}</button>`;
+    html+=`<button class="fcfg-btn" onclick="${cfg.btn.fn}()">${cfg.btn.label}</button>`;
   }
   document.getElementById('fcfg-body').innerHTML=html;
   document.getElementById('flow-cfg').classList.add('open');
+}
+
+function goToSettings() {
+  const el = document.querySelector('[data-section="settings"]');
+  if (el) switchTab('settings', el);
 }
 
 function closeCfg() {
