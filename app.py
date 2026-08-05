@@ -202,7 +202,7 @@ Main Content –
 Power Statement – End with a clear, definitive thought that feels like truth.
 Call to Action – Finish with a short question or prompt that invites reflection or response.
 
-Add 3 hashtags, 1 topic, 1 target audience, 1 general
+Add exactly 3 hashtags inline at the end: one topic-specific, one target-audience-specific, one general. No labels, no bullet points — just the hashtags.
 Output only the copy. No section titles, no labels like "Rehook:" "Title:", no formatting notes. DO NOT ADD "POWER STATEMENT:" Don't add #underdogs, replace with #smallbiz.
 
 ---
