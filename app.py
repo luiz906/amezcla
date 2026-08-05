@@ -214,12 +214,20 @@ Page content:
 """
 
 
-MOCK_POST = os.environ.get("MOCK_POST", "")
+def get_mock_mode() -> dict:
+    with get_db() as conn:
+        row = conn.execute("SELECT value FROM kv WHERE key='mock_mode'").fetchone()
+    if not row:
+        return {"enabled": False, "text": ""}
+    try:
+        return json.loads(row["value"])
+    except Exception:
+        return {"enabled": False, "text": ""}
 
 
-def generate_linkedin_post(post_name: str, properties: str, content: str) -> str:
-    if MOCK_POST:
-        return MOCK_POST
+def generate_linkedin_post(post_name: str, properties: str, content: str, mock_text: str = "") -> str:
+    if mock_text:
+        return mock_text
     client = Anthropic(api_key=ANTHROPIC_API_KEY)
     system = "You are a social media content expert and brand designer for Amezcla."
     if BRAND_KNOWLEDGE:
@@ -309,8 +317,11 @@ async def run_workflow() -> str:
     properties = await get_page_properties_as_text(page)
     content = await get_page_blocks_as_text(page_id)
 
-    post_text = generate_linkedin_post(post_name, properties, content)
-    print(f"  Generated {len(post_text)} chars of copy.")
+    mock = get_mock_mode()
+    mock_text = mock["text"] if mock["enabled"] else ""
+    post_text = generate_linkedin_post(post_name, properties, content, mock_text=mock_text)
+    label = "[MOCK]" if mock_text else ""
+    print(f"  Generated {len(post_text)} chars of copy. {label}")
 
     await append_to_notion_page(page_id, post_text)
 
@@ -458,6 +469,15 @@ pre.notion-pre .num{color:#80c0e0}
 .save-msg{font-family:var(--mono);font-size:.72rem;color:var(--green);display:none}
 .full-width{grid-column:1/-1}
 
+/* TOGGLE */
+.toggle{position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0;position:absolute}
+.toggle-slider{position:absolute;cursor:pointer;inset:0;background:rgba(255,255,255,.07);border:1px solid var(--border);transition:.2s}
+.toggle-slider:before{content:'';position:absolute;width:16px;height:16px;left:2px;bottom:2px;background:var(--text-dim);transition:.2s}
+input:checked + .toggle-slider{background:rgba(227,160,40,.15);border-color:var(--amber)}
+input:checked + .toggle-slider:before{transform:translateX(18px);background:var(--amber)}
+.mock-badge{display:none;font-family:var(--mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--red);border:1px solid var(--red);padding:1px 8px;animation:pulse 1.5s infinite}
+
 /* MODAL */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;display:none;align-items:center;justify-content:center}
 .modal-overlay.open{display:flex}
@@ -528,6 +548,7 @@ _DASHBOARD_HTML = """<!doctype html>
     <div class="topbar-right">
       <span><span class="dot dot-green"></span>ONLINE</span>
       <span>NEXT RUN __NEXT_RUN__</span>
+      <span class="mock-badge" id="mock-badge">TEST MODE</span>
       <span id="clock"></span>
     </div>
   </div>
@@ -601,6 +622,29 @@ _DASHBOARD_HTML = """<!doctype html>
             <div class="field"><label>Run Time (UTC)</label><div class="field-val">__NEXT_RUN__</div></div>
             <div class="field"><label>Frequency</label><div class="field-val">Daily</div></div>
             <div class="field"><label>To change</label><div class="field-val" style="font-size:.7rem">Update SCHEDULE_HOUR / SCHEDULE_MINUTE in Render env vars</div></div>
+          </div>
+        </div>
+        <div class="settings-card full-width">
+          <div class="settings-card-head">Test Mode — Skip Claude</div>
+          <div class="settings-card-body">
+            <div class="field">
+              <label>Bypass Claude API (no credits used)</label>
+              <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+                <label class="toggle">
+                  <input type="checkbox" id="mock-toggle" onchange="saveMockMode()">
+                  <span class="toggle-slider"></span>
+                </label>
+                <span id="mock-label" style="font-family:var(--mono);font-size:.8rem;color:var(--text-dim)">OFF</span>
+              </div>
+            </div>
+            <div class="field" id="mock-text-field" style="display:none">
+              <label>Mock post text (used instead of Claude output)</label>
+              <textarea class="prompt-area" id="mock-text" style="min-height:80px" placeholder="This is a test post..."></textarea>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="save-btn" onclick="saveMockMode()">Save</button>
+              <span class="save-msg" id="mock-save-msg">Saved ✓</span>
+            </div>
           </div>
         </div>
         <div class="settings-card full-width">
@@ -730,6 +774,35 @@ async function loadSettings() {
 
   const bk = await fetch('/api/brand-knowledge').then(r=>r.json());
   document.getElementById('brand-knowledge').value = bk.value || '';
+  await loadMockMode();
+}
+
+async function loadMockMode() {
+  const data = await fetch('/api/mock-mode').then(r=>r.json());
+  const toggle = document.getElementById('mock-toggle');
+  toggle.checked = data.enabled;
+  document.getElementById('mock-text').value = data.text || '';
+  document.getElementById('mock-label').textContent = data.enabled ? 'ON' : 'OFF';
+  document.getElementById('mock-label').style.color = data.enabled ? 'var(--amber)' : 'var(--text-dim)';
+  document.getElementById('mock-text-field').style.display = data.enabled ? 'block' : 'none';
+  document.getElementById('mock-badge').style.display = data.enabled ? 'inline' : 'none';
+}
+
+async function saveMockMode() {
+  const enabled = document.getElementById('mock-toggle').checked;
+  const text = document.getElementById('mock-text').value;
+  document.getElementById('mock-label').textContent = enabled ? 'ON' : 'OFF';
+  document.getElementById('mock-label').style.color = enabled ? 'var(--amber)' : 'var(--text-dim)';
+  document.getElementById('mock-text-field').style.display = enabled ? 'block' : 'none';
+  document.getElementById('mock-badge').style.display = enabled ? 'inline' : 'none';
+  await fetch('/api/mock-mode', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enabled, text})
+  });
+  const msg = document.getElementById('mock-save-msg');
+  msg.style.display = 'inline';
+  setTimeout(() => msg.style.display = 'none', 2000);
 }
 
 async function saveBrandKnowledge() {
@@ -894,6 +967,22 @@ async def save_brand_knowledge(payload: dict):
     with get_db() as conn:
         conn.execute(
             "INSERT INTO kv(key,value) VALUES('brand_knowledge',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (val,)
+        )
+    return {"status": "saved"}
+
+
+@app.get("/api/mock-mode")
+async def get_mock_mode_api():
+    return get_mock_mode()
+
+
+@app.post("/api/mock-mode")
+async def set_mock_mode_api(payload: dict):
+    val = json.dumps({"enabled": bool(payload.get("enabled")), "text": payload.get("text", "")})
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO kv(key,value) VALUES('mock_mode',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (val,)
         )
     return {"status": "saved"}
