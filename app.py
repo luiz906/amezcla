@@ -498,6 +498,49 @@ input:checked + .toggle-slider:before{transform:translateX(18px);background:var(
 .btn-reject:disabled{opacity:.4;cursor:not-allowed}
 .modal-msg{font-family:var(--mono);font-size:.75rem;color:var(--text-dim);margin-left:auto;align-self:center}
 
+/* FLOW CANVAS */
+.flow-outer{display:flex;flex-direction:column;height:100%;margin:-28px}
+.flow-toolbar{padding:10px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0}
+.flow-tool-btn{background:none;border:1px solid var(--border);color:var(--text-dim);padding:4px 14px;font-family:var(--mono);font-size:.68rem;cursor:pointer;transition:all .15s}
+.flow-tool-btn:hover{border-color:var(--amber);color:var(--amber)}
+.flow-inner{flex:1;display:flex;overflow:hidden;position:relative}
+.flow-wrap{flex:1;overflow:hidden;background-color:var(--bg);background-image:radial-gradient(circle,rgba(227,160,40,.07) 1px,transparent 1px);background-size:28px 28px;cursor:grab;position:relative}
+.flow-wrap.panning{cursor:grabbing}
+.flow-canvas{position:absolute;transform-origin:0 0}
+.flow-svg{position:absolute;top:0;left:0;pointer-events:none;overflow:visible}
+.flow-node{position:absolute;width:192px;background:var(--panel);border:1px solid var(--border);cursor:default;transition:border-color .15s,box-shadow .15s;user-select:none}
+.flow-node:hover{border-color:rgba(227,160,40,.45)}
+.flow-node.selected{border-color:var(--amber) !important;box-shadow:0 0 0 1px rgba(227,160,40,.25)}
+.fn-head{padding:9px 13px;display:flex;align-items:center;gap:8px;cursor:grab;border-bottom:1px solid var(--border)}
+.fn-head:active{cursor:grabbing}
+.fn-icon{font-size:.9rem;width:18px;text-align:center}
+.fn-title{font-family:var(--head);font-size:.58rem;letter-spacing:.15em;text-transform:uppercase;flex:1}
+.fn-dot{width:7px;height:7px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
+.fn-dot.live{background:var(--green);box-shadow:0 0 5px var(--green)}
+.fn-body{padding:10px 13px;display:flex;flex-direction:column;gap:5px}
+.fn-row{display:flex;flex-direction:column;gap:1px}
+.fn-lbl{font-family:var(--mono);font-size:.58rem;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim)}
+.fn-val{font-family:var(--mono);font-size:.7rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fn-port{position:absolute;width:10px;height:10px;background:var(--panel);border:2px solid var(--amber-dim);border-radius:50%;top:calc(50% - 5px)}
+.fn-port-in{left:-5px}
+.fn-port-out{right:-5px}
+.flow-cfg{width:0;overflow:hidden;background:var(--panel);border-left:1px solid var(--border);transition:width .2s;display:flex;flex-direction:column;flex-shrink:0}
+.flow-cfg.open{width:264px}
+.fcfg-head{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;min-width:264px}
+.fcfg-title{font-family:var(--head);font-size:.6rem;letter-spacing:.18em;text-transform:uppercase;color:var(--amber)}
+.fcfg-close{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:1rem;padding:0 2px}
+.fcfg-close:hover{color:var(--amber)}
+.fcfg-body{padding:14px 16px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;flex:1;min-width:264px}
+.fcfg-desc{font-family:var(--body);font-size:.82rem;color:var(--text-dim);line-height:1.5;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.fcfg-field{display:flex;flex-direction:column;gap:4px}
+.fcfg-lbl{font-family:var(--mono);font-size:.62rem;letter-spacing:.09em;text-transform:uppercase;color:var(--text-dim)}
+.fcfg-val{font-family:var(--mono);font-size:.74rem;color:var(--text);background:rgba(0,0,0,.25);border:1px solid var(--border);padding:6px 9px;word-break:break-all;line-height:1.4}
+.fcfg-textarea{background:rgba(0,0,0,.3);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:.7rem;padding:7px 9px;width:100%;outline:none;resize:vertical;min-height:90px;line-height:1.5;box-sizing:border-box}
+.fcfg-textarea:focus{border-color:var(--amber)}
+.fcfg-btn{background:none;border:1px solid var(--amber);color:var(--amber);padding:6px 16px;font-family:var(--head);font-size:.58rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:all .15s}
+.fcfg-btn:hover{background:rgba(227,160,40,.1)}
+.fcfg-saved{font-family:var(--mono);font-size:.7rem;color:var(--green);display:none;margin-left:8px}
+
 @media(max-width:700px){
   .sidebar{width:56px}
   .sidebar-logo .wordmark,.sidebar-logo .sub,.nav-item span,.run-btn,.run-status,.sidebar-footer .run-btn-label{display:none}
@@ -526,7 +569,10 @@ _DASHBOARD_HTML = """<!doctype html>
     <div class="sub">LinkedIn OPS</div>
   </div>
   <nav class="sidebar-nav">
-    <div class="nav-item active" data-section="posts" onclick="switchTab('posts',this)">
+    <div class="nav-item active" data-section="flow" onclick="switchTab('flow',this)">
+      <span class="nav-icon">◈</span><span>Flow</span>
+    </div>
+    <div class="nav-item" data-section="posts" onclick="switchTab('posts',this)">
       <span class="nav-icon">▤</span><span>Posts</span>
     </div>
     <div class="nav-item" data-section="debug" onclick="switchTab('debug',this)">
@@ -556,8 +602,34 @@ _DASHBOARD_HTML = """<!doctype html>
 
   <div class="content">
 
+    <!-- FLOW -->
+    <div class="section active" id="section-flow">
+      <div class="flow-outer">
+        <div class="flow-toolbar">
+          <span style="font-family:var(--head);font-size:.6rem;letter-spacing:.2em;text-transform:uppercase;color:var(--amber)">Workflow</span>
+          <button class="flow-tool-btn" onclick="resetFlowView()">⊡ Reset View</button>
+          <button class="flow-tool-btn" onclick="runNow()">▶ Run Now</button>
+          <span id="flow-run-msg" style="font-family:var(--mono);font-size:.7rem;color:var(--text-dim)"></span>
+        </div>
+        <div class="flow-inner">
+          <div class="flow-wrap" id="flow-wrap">
+            <div class="flow-canvas" id="flow-canvas">
+              <svg class="flow-svg" id="flow-svg"></svg>
+            </div>
+          </div>
+          <div class="flow-cfg" id="flow-cfg">
+            <div class="fcfg-head">
+              <span class="fcfg-title" id="fcfg-title">Node</span>
+              <button class="fcfg-close" onclick="closeCfg()">✕</button>
+            </div>
+            <div class="fcfg-body" id="fcfg-body"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- POSTS -->
-    <div class="section active" id="section-posts">
+    <div class="section" id="section-posts">
       <div class="stat-row">
         <div class="stat-card">
           <div class="stat-num" id="cnt-pending">—</div>
@@ -824,15 +896,20 @@ async function runNow() {
   const status = document.getElementById('runStatus');
   btn.disabled = true;
   status.textContent = 'Running...';
+  const flowMsg = document.getElementById('flow-run-msg');
   try {
     const res = await fetch('/api/run', {method:'POST'});
     const data = await res.json();
-    status.textContent = data.message || data.status;
+    const msg = data.message || data.status;
+    status.textContent = msg;
+    if(flowMsg) flowMsg.textContent = msg;
     loadPosts();
   } catch(e) {
     status.textContent = 'Error: ' + e;
+    if(flowMsg) flowMsg.textContent = 'Error: ' + e;
   }
   btn.disabled = false;
+  setTimeout(() => { if(flowMsg) flowMsg.textContent=''; }, 8000);
 }
 
 // Modal
@@ -881,11 +958,213 @@ async function submitReview(action) {
   }
 }
 
-document.addEventListener('keydown', e => { if(e.key==='Escape') closeModal(); });
+document.addEventListener('keydown', e => { if(e.key==='Escape') { closeModal(); closeCfg(); } });
+
+// ─── FLOW CANVAS ─────────────────────────────────────────────────────────────
+const FN_W = 192;
+
+const NODES = [
+  { id:'trigger',    title:'Schedule',      icon:'⏰', color:'#28a0e0',
+    fields:[{l:'Type',v:'Daily Cron'},{l:'Time (UTC)',v:'__NEXT_RUN__'}],
+    out:true },
+  { id:'notion-in',  title:'Notion Query',  icon:'▤',  color:'#e3a028',
+    fields:[{l:'Filter',v:'Not Started + LMTZ'},{l:'Returns',v:'1 page'}],
+    inp:true, out:true },
+  { id:'claude',     title:'Claude AI',     icon:'✦',  color:'#9b59b6',
+    fields:[{l:'Model',v:'Haiku 4.5'},{l:'Output',v:'LinkedIn copy'}],
+    inp:true, out:true },
+  { id:'review',     title:'Human Review',  icon:'◉',  color:'#e08028',
+    fields:[{l:'Gate',v:'Approve / Edit / Reject'}],
+    inp:true, out:true },
+  { id:'blotato',    title:'Blotato Post',  icon:'↗',  color:'#28e060',
+    fields:[{l:'Platform',v:'LinkedIn'},{l:'API',v:'blotato.com/v2'}],
+    inp:true, out:true },
+  { id:'notion-out', title:'Notion Update', icon:'✓',  color:'#e3a028',
+    fields:[{l:'Status →',v:'Posted 🎉'},{l:'Sets',v:'Posting Date, Type'}],
+    inp:true },
+];
+
+const EDGES = [
+  ['trigger','notion-in'],['notion-in','claude'],
+  ['claude','review'],['review','blotato'],['blotato','notion-out'],
+];
+
+const NODE_CFG = {
+  'trigger':    { desc:'Fires the workflow on a daily cron schedule, or immediately via Run Now.',
+    fields:[{l:'Run time (UTC)',v:'__NEXT_RUN__'},{l:'Change via',v:'SCHEDULE_HOUR / SCHEDULE_MINUTE env vars'}] },
+  'notion-in':  { desc:'Queries the Notion database for the next unprocessed LMTZ post.',
+    fields:[{l:'Database',v:'__NOTION_DB_ID__'},{l:'Status filter',v:'Not Started'},{l:'Client filter',v:'LMTZ'}] },
+  'claude':     { desc:'Generates LinkedIn post copy using Claude Haiku 4.5.',
+    fields:[{l:'Model',v:'claude-haiku-4-5-20251001'},{l:'Prompt',v:'Edit in Settings tab'}],
+    btn:{label:'Open Settings →', fn:'switchTab("settings",document.querySelector(\'[data-section="settings"]\'))'} },
+  'review':     { desc:'Pauses for human review. Edit the copy inline in the modal before approving.',
+    fields:[{l:'UI',v:'Dashboard modal (editable)'}], dynamic:'pending' },
+  'blotato':    { desc:'Posts the approved copy to LinkedIn via the Blotato API.',
+    fields:[{l:'Endpoint',v:'backend.blotato.com/v2/posts'},{l:'Platform',v:'LinkedIn'}] },
+  'notion-out': { desc:'Marks the Notion page as Posted and records the posting date.',
+    fields:[{l:'Status →',v:'Posted 🎉'},{l:'Posting Date',v:'Set to UTC now'},{l:'Type',v:'Written Post'}] },
+};
+
+let flowPan={x:60,y:80}, flowScale=0.85;
+let isPanning=false, panStart={};
+let isDragging=false, dragId=null, dragOff={};
+
+function fnHeight(n){ return 42 + n.fields.length * 28 + 8; }
+
+function initFlow() {
+  const wrap = document.getElementById('flow-wrap');
+  const canvas = document.getElementById('flow-canvas');
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem('flow_pos') || '{}'); } catch(e) {}
+
+  let dx = 40;
+  NODES.forEach(n => {
+    n.x = saved[n.id]?.x ?? dx;
+    n.y = saved[n.id]?.y ?? 80;
+    dx += FN_W + 56;
+    const el = document.createElement('div');
+    el.className = 'flow-node'; el.id = 'fn-' + n.id;
+    el.style.cssText = `left:${n.x}px;top:${n.y}px`;
+    el.innerHTML = `
+      <div class="fn-head" style="border-left:3px solid ${n.color}">
+        <span class="fn-icon">${n.icon}</span>
+        <span class="fn-title" style="color:${n.color}">${n.title}</span>
+        <span class="fn-dot" id="fd-${n.id}"></span>
+      </div>
+      <div class="fn-body">
+        ${n.fields.map(f=>`<div class="fn-row"><span class="fn-lbl">${f.l}</span><span class="fn-val">${f.v}</span></div>`).join('')}
+      </div>
+      ${n.inp ? '<div class="fn-port fn-port-in"></div>' : ''}
+      ${n.out ? '<div class="fn-port fn-port-out"></div>' : ''}`;
+    el.querySelector('.fn-head').addEventListener('mousedown', e => {
+      e.stopPropagation();
+      isDragging=true; dragId=n.id;
+      dragOff = { x: e.clientX - n.x*flowScale - flowPan.x,
+                  y: e.clientY - n.y*flowScale - flowPan.y };
+      selectFn(n.id);
+    });
+    el.addEventListener('click', e => { e.stopPropagation(); selectFn(n.id); });
+    canvas.appendChild(el);
+  });
+
+  drawEdges();
+  applyFlowXform();
+
+  wrap.addEventListener('mousedown', e => {
+    if (!isDragging) {
+      isPanning=true;
+      panStart={x:e.clientX-flowPan.x, y:e.clientY-flowPan.y};
+      wrap.classList.add('panning');
+    }
+  });
+  window.addEventListener('mousemove', e => {
+    if (isPanning) {
+      flowPan.x=e.clientX-panStart.x; flowPan.y=e.clientY-panStart.y;
+      applyFlowXform();
+    }
+    if (isDragging && dragId) {
+      const n = NODES.find(n=>n.id===dragId);
+      n.x=(e.clientX-dragOff.x-flowPan.x)/flowScale;
+      n.y=(e.clientY-dragOff.y-flowPan.y)/flowScale;
+      document.getElementById('fn-'+dragId).style.left=n.x+'px';
+      document.getElementById('fn-'+dragId).style.top=n.y+'px';
+      drawEdges();
+    }
+  });
+  window.addEventListener('mouseup', () => {
+    if (isPanning) { isPanning=false; wrap.classList.remove('panning'); }
+    if (isDragging && dragId) {
+      const n=NODES.find(n=>n.id===dragId);
+      const s=JSON.parse(localStorage.getItem('flow_pos')||'{}');
+      s[dragId]={x:n.x,y:n.y};
+      localStorage.setItem('flow_pos',JSON.stringify(s));
+      isDragging=false; dragId=null;
+    }
+  });
+  wrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    const d=e.deltaY<0?1.1:0.9;
+    const r=wrap.getBoundingClientRect();
+    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    flowPan.x=mx+(flowPan.x-mx)*d;
+    flowPan.y=my+(flowPan.y-my)*d;
+    flowScale=Math.min(2,Math.max(0.2,flowScale*d));
+    applyFlowXform();
+  },{passive:false});
+}
+
+function drawEdges() {
+  const svg=document.getElementById('flow-svg');
+  svg.innerHTML='<defs><marker id="arr" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><polygon points="0 0,6 3,0 6" fill="rgba(227,160,40,.55)"/></marker></defs>';
+  svg.setAttribute('width','4000'); svg.setAttribute('height','2000');
+  EDGES.forEach(([fid,tid]) => {
+    const fn=NODES.find(n=>n.id===fid), tn=NODES.find(n=>n.id===tid);
+    if(!fn||!tn) return;
+    const ax=fn.x+FN_W, ay=fn.y+fnHeight(fn)/2;
+    const bx=tn.x,       by=tn.y+fnHeight(tn)/2;
+    const cx=(ax+bx)/2;
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d',`M${ax},${ay} C${cx},${ay} ${cx},${by} ${bx},${by}`);
+    p.setAttribute('stroke','rgba(227,160,40,.3)');
+    p.setAttribute('stroke-width','2');
+    p.setAttribute('fill','none');
+    p.setAttribute('marker-end','url(#arr)');
+    svg.appendChild(p);
+  });
+}
+
+function applyFlowXform() {
+  document.getElementById('flow-canvas').style.transform=
+    `translate(${flowPan.x}px,${flowPan.y}px) scale(${flowScale})`;
+}
+
+function resetFlowView() {
+  flowPan={x:60,y:80}; flowScale=0.85; applyFlowXform();
+}
+
+let selectedFnId=null;
+
+function selectFn(id) {
+  document.querySelectorAll('.flow-node').forEach(el=>el.classList.remove('selected'));
+  document.getElementById('fn-'+id)?.classList.add('selected');
+  selectedFnId=id; openCfg(id);
+}
+
+async function openCfg(id) {
+  const cfg=NODE_CFG[id];
+  const n=NODES.find(n=>n.id===id);
+  if(!cfg||!n) return;
+  document.getElementById('fcfg-title').textContent=n.title;
+  let html=`<div class="fcfg-desc">${cfg.desc}</div>`;
+  for(const f of cfg.fields) {
+    html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><div class="fcfg-val">${f.v}</div></div>`;
+  }
+  if(cfg.dynamic==='pending') {
+    try {
+      const posts=await fetch('/api/posts').then(r=>r.json());
+      const p=posts.filter(p=>p.status==='pending').length;
+      const a=posts.filter(p=>p.status==='approved').length;
+      html+=`<div class="fcfg-field"><span class="fcfg-lbl">Pending reviews</span><div class="fcfg-val">${p}</div></div>`;
+      html+=`<div class="fcfg-field"><span class="fcfg-lbl">Total approved</span><div class="fcfg-val">${a}</div></div>`;
+    } catch(e) {}
+  }
+  if(cfg.btn) {
+    html+=`<button class="fcfg-btn" onclick="${cfg.btn.fn}">${cfg.btn.label}</button>`;
+  }
+  document.getElementById('fcfg-body').innerHTML=html;
+  document.getElementById('flow-cfg').classList.add('open');
+}
+
+function closeCfg() {
+  document.getElementById('flow-cfg')?.classList.remove('open');
+  document.querySelectorAll('.flow-node').forEach(el=>el.classList.remove('selected'));
+  selectedFnId=null;
+}
 
 // Init
 loadPosts();
 setInterval(loadPosts, 30000);
+initFlow();
 </script>
 </body></html>"""
 
