@@ -73,12 +73,14 @@ def init_db():
 # ---------------------------------------------------------------------------
 async def find_notion_page() -> dict | None:
     """Return the first Not Started / LMTZ page, or None."""
-    url = f"https://api.notion.com/v1/databases/{NOTION_DB_ID}/query"
+    db_id = get_kv("notion_db_id", NOTION_DB_ID)
+    lmtz_id = get_kv("lmtz_page_id", LMTZ_PAGE_ID)
+    url = f"https://api.notion.com/v1/databases/{db_id}/query"
     body = {
         "filter": {
             "and": [
                 {"property": "Status", "status": {"equals": "Not Started"}},
-                {"property": "ClientsOS", "relation": {"contains": LMTZ_PAGE_ID}},
+                {"property": "ClientsOS", "relation": {"contains": lmtz_id}},
             ]
         },
         "page_size": 1,
@@ -214,6 +216,20 @@ Page content:
 """
 
 
+def get_kv(key: str, default: str = "") -> str:
+    with get_db() as conn:
+        row = conn.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_kv(key: str, value: str):
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+
 def get_mock_mode() -> dict:
     with get_db() as conn:
         row = conn.execute("SELECT value FROM kv WHERE key='mock_mode'").fetchone()
@@ -233,8 +249,9 @@ def generate_linkedin_post(post_name: str, properties: str, content: str, mock_t
     if BRAND_KNOWLEDGE:
         system += f"\n\nBrand knowledge:\n{BRAND_KNOWLEDGE}"
 
+    model = get_kv("claude_model", "claude-haiku-4-5-20251001")
     message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model=model,
         max_tokens=1024,
         system=system,
         messages=[
@@ -342,15 +359,21 @@ async def run_workflow() -> str:
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+_scheduler: AsyncIOScheduler | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _scheduler
     init_db()
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_workflow, "cron", hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
-    scheduler.start()
-    print(f"Scheduler started — runs daily at {SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d} UTC")
+    h = int(get_kv("schedule_hour", str(SCHEDULE_HOUR)))
+    m = int(get_kv("schedule_minute", str(SCHEDULE_MINUTE)))
+    _scheduler = AsyncIOScheduler()
+    _scheduler.add_job(run_workflow, "cron", id="daily_run", hour=h, minute=m)
+    _scheduler.start()
+    print(f"Scheduler started — runs daily at {h:02d}:{m:02d} UTC")
     yield
-    scheduler.shutdown()
+    _scheduler.shutdown()
 
 
 app = FastAPI(title="LinkedIn Post Automation", lifespan=lifespan)
@@ -541,6 +564,10 @@ input:checked + .toggle-slider:before{transform:translateX(18px);background:var(
 .fcfg-btn{background:none;border:1px solid var(--amber);color:var(--amber);padding:6px 16px;font-family:var(--head);font-size:.58rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:all .15s}
 .fcfg-btn:hover{background:rgba(227,160,40,.1)}
 .fcfg-saved{font-family:var(--mono);font-size:.7rem;color:var(--green);display:none;margin-left:8px}
+.fcfg-input{background:rgba(0,0,0,.35);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:.72rem;padding:6px 9px;width:100%;outline:none;box-sizing:border-box}
+.fcfg-input:focus{border-color:var(--amber)}
+.fcfg-input option{background:var(--panel);color:var(--text)}
+.fcfg-btn-row{display:flex;align-items:center;gap:10px;padding-top:4px}
 
 @media(max-width:700px){
   .sidebar{width:56px}
@@ -991,19 +1018,37 @@ const EDGES = [
 ];
 
 const NODE_CFG = {
-  'trigger':    { desc:'Fires the workflow on a daily cron schedule, or immediately via Run Now.',
-    fields:[{l:'Run time (UTC)',v:'__NEXT_RUN__'},{l:'Change via',v:'SCHEDULE_HOUR / SCHEDULE_MINUTE env vars'}] },
-  'notion-in':  { desc:'Queries the Notion database for the next unprocessed LMTZ post.',
-    fields:[{l:'Database',v:'__NOTION_DB_ID__'},{l:'Status filter',v:'Not Started'},{l:'Client filter',v:'LMTZ'}] },
-  'claude':     { desc:'Generates LinkedIn post copy using Claude Haiku 4.5.',
-    fields:[{l:'Model',v:'claude-haiku-4-5-20251001'},{l:'Prompt',v:'Edit in Settings tab'}],
+  'trigger': { desc:'Fires the workflow on a daily cron schedule, or immediately via Run Now.',
+    fields:[
+      {l:'Run time (UTC)', key:'schedule_time', type:'time'},
+      {l:'Trigger type',   v:'Daily Cron', readonly:true}
+    ]},
+  'notion-in': { desc:'Queries the Notion database for the next unprocessed LMTZ post.',
+    fields:[
+      {l:'Database ID',   key:'notion_db_id', type:'text'},
+      {l:'Status filter', v:'Not Started', readonly:true},
+      {l:'LMTZ Page ID',  key:'lmtz_page_id', type:'text'}
+    ]},
+  'claude': { desc:'Generates LinkedIn post copy using Claude AI.',
+    fields:[
+      {l:'Model', key:'claude_model', type:'select',
+       options:['claude-haiku-4-5-20251001','claude-sonnet-5','claude-opus-4-8']},
+      {l:'Prompt', v:'Edit in Settings tab', readonly:true}
+    ],
     btn:{label:'Open Settings →', fn:'goToSettings'} },
-  'review':     { desc:'Pauses for human review. Edit the copy inline in the modal before approving.',
-    fields:[{l:'UI',v:'Dashboard modal (editable)'}], dynamic:'pending' },
-  'blotato':    { desc:'Posts the approved copy to LinkedIn via the Blotato API.',
-    fields:[{l:'Endpoint',v:'backend.blotato.com/v2/posts'},{l:'Platform',v:'LinkedIn'}] },
+  'review': { desc:'Pauses for human review. Edit the copy inline in the modal before approving.',
+    fields:[{l:'UI', v:'Dashboard modal (editable)', readonly:true}], dynamic:'pending' },
+  'blotato': { desc:'Posts the approved copy to LinkedIn via the Blotato API.',
+    fields:[
+      {l:'Endpoint', v:'backend.blotato.com/v2/posts', readonly:true},
+      {l:'Platform',  v:'LinkedIn', readonly:true}
+    ]},
   'notion-out': { desc:'Marks the Notion page as Posted and records the posting date.',
-    fields:[{l:'Status →',v:'Posted 🎉'},{l:'Posting Date',v:'Set to UTC now'},{l:'Type',v:'Written Post'}] },
+    fields:[
+      {l:'Status →',    v:'Posted 🎉', readonly:true},
+      {l:'Posting Date',v:'Set to UTC now', readonly:true},
+      {l:'Type',        v:'Written Post', readonly:true}
+    ]},
 };
 
 let flowPan={x:60,y:80}, flowScale=0.85;
@@ -1136,9 +1181,25 @@ async function openCfg(id) {
   const n=NODES.find(n=>n.id===id);
   if(!cfg||!n) return;
   document.getElementById('fcfg-title').textContent=n.title;
+
+  let config={};
+  try { config=await fetch('/api/node-config').then(r=>r.json()); } catch(e){}
+
   let html=`<div class="fcfg-desc">${cfg.desc}</div>`;
+  let hasEditable=false;
   for(const f of cfg.fields) {
-    html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><div class="fcfg-val">${f.v}</div></div>`;
+    if(f.readonly||!f.key) {
+      html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><div class="fcfg-val">${f.v??''}</div></div>`;
+    } else {
+      hasEditable=true;
+      const val=(config[f.key]??f.v??'').toString().replace(/"/g,'&quot;');
+      if(f.type==='select') {
+        const opts=f.options.map(o=>`<option value="${o}"${o===config[f.key]?' selected':''}>${o}</option>`).join('');
+        html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><select class="fcfg-input" data-key="${f.key}">${opts}</select></div>`;
+      } else {
+        html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><input class="fcfg-input" type="${f.type||'text'}" data-key="${f.key}" value="${val}"></div>`;
+      }
+    }
   }
   if(cfg.dynamic==='pending') {
     try {
@@ -1147,13 +1208,27 @@ async function openCfg(id) {
       const a=posts.filter(p=>p.status==='approved').length;
       html+=`<div class="fcfg-field"><span class="fcfg-lbl">Pending reviews</span><div class="fcfg-val">${p}</div></div>`;
       html+=`<div class="fcfg-field"><span class="fcfg-lbl">Total approved</span><div class="fcfg-val">${a}</div></div>`;
-    } catch(e) {}
+    } catch(e){}
+  }
+  if(hasEditable) {
+    html+=`<div class="fcfg-btn-row"><button class="fcfg-btn" onclick="saveCfg()">Save</button><span class="fcfg-saved" id="fcfg-saved-msg">Saved ✓</span></div>`;
   }
   if(cfg.btn) {
-    html+=`<button class="fcfg-btn" onclick="${cfg.btn.fn}()">${cfg.btn.label}</button>`;
+    html+=`<button class="fcfg-btn" style="margin-top:4px" onclick="${cfg.btn.fn}()">${cfg.btn.label}</button>`;
   }
   document.getElementById('fcfg-body').innerHTML=html;
   document.getElementById('flow-cfg').classList.add('open');
+}
+
+async function saveCfg() {
+  const inputs=document.querySelectorAll('#fcfg-body .fcfg-input');
+  const updates={};
+  inputs.forEach(el=>{ if(el.dataset.key) updates[el.dataset.key]=el.value; });
+  try {
+    await fetch('/api/node-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(updates)});
+    const msg=document.getElementById('fcfg-saved-msg');
+    if(msg){msg.style.display='inline';setTimeout(()=>msg.style.display='none',2500);}
+  } catch(e){ alert('Save failed: '+e.message); }
 }
 
 function goToSettings() {
@@ -1243,6 +1318,39 @@ async def api_config():
         "NOTION_DB_ID":              NOTION_DB_ID,
         "LMTZ_PAGE_ID":              LMTZ_PAGE_ID,
     }
+
+
+@app.get("/api/node-config")
+async def get_node_config():
+    h = get_kv("schedule_hour", str(SCHEDULE_HOUR))
+    m = get_kv("schedule_minute", str(SCHEDULE_MINUTE))
+    return {
+        "schedule_time": f"{int(h):02d}:{int(m):02d}",
+        "notion_db_id":  get_kv("notion_db_id",  NOTION_DB_ID),
+        "lmtz_page_id":  get_kv("lmtz_page_id",  LMTZ_PAGE_ID),
+        "claude_model":  get_kv("claude_model",   "claude-haiku-4-5-20251001"),
+    }
+
+
+@app.post("/api/node-config")
+async def set_node_config(payload: dict):
+    allowed = {"schedule_time", "notion_db_id", "lmtz_page_id", "claude_model"}
+    for key, value in payload.items():
+        if key not in allowed:
+            continue
+        if key == "schedule_time":
+            try:
+                parts = str(value).split(":")
+                h, m = int(parts[0]), int(parts[1])
+                set_kv("schedule_hour", str(h))
+                set_kv("schedule_minute", str(m))
+                if _scheduler and _scheduler.running:
+                    _scheduler.reschedule_job("daily_run", trigger="cron", hour=h, minute=m)
+            except Exception:
+                pass
+        else:
+            set_kv(key, str(value).strip())
+    return {"status": "saved"}
 
 
 @app.get("/api/brand-knowledge")
