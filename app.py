@@ -246,24 +246,22 @@ def generate_linkedin_post(post_name: str, properties: str, content: str, mock_t
         return mock_text
     client = Anthropic(api_key=ANTHROPIC_API_KEY)
     system = "You are a social media content expert and brand designer for Amezcla."
-    if BRAND_KNOWLEDGE:
-        system += f"\n\nBrand knowledge:\n{BRAND_KNOWLEDGE}"
+    bk = get_kv("brand_knowledge", BRAND_KNOWLEDGE)
+    if bk:
+        system += f"\n\nBrand knowledge:\n{bk}"
 
     model = get_kv("claude_model", "claude-haiku-4-5-20251001")
+    prompt_template = get_kv("linkedin_prompt", LINKEDIN_PROMPT)
+    try:
+        prompt = prompt_template.format(post_name=post_name, properties=properties, content=content)
+    except (KeyError, ValueError):
+        prompt = f"{prompt_template}\n\nPost name: {post_name}\n\nProperties:\n{properties}\n\nContent:\n{content}"
+
     message = client.messages.create(
         model=model,
         max_tokens=1024,
         system=system,
-        messages=[
-            {
-                "role": "user",
-                "content": LINKEDIN_PROMPT.format(
-                    post_name=post_name,
-                    properties=properties,
-                    content=content,
-                ),
-            }
-        ],
+        messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text
 
@@ -764,8 +762,13 @@ _DASHBOARD_HTML = """<!doctype html>
         <div class="settings-card full-width">
           <div class="settings-card-head">LinkedIn Post Prompt</div>
           <div class="settings-card-body">
-            <div class="field"><label>Active prompt template</label>
-              <pre style="font-family:var(--mono);font-size:.72rem;color:var(--text-dim);background:rgba(0,0,0,.3);border:1px solid var(--border);padding:12px;line-height:1.6;white-space:pre-wrap;max-height:300px;overflow-y:auto">__PROMPT_PREVIEW__</pre>
+            <div class="field">
+              <label>Prompt template (use {post_name}, {properties}, {content} as placeholders)</label>
+              <textarea class="prompt-area" id="linkedin-prompt" style="min-height:260px" placeholder="Loading..."></textarea>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="save-btn" onclick="savePrompt()">Save</button>
+              <span class="save-msg" id="prompt-save-msg">Saved ✓</span>
             </div>
           </div>
         </div>
@@ -876,6 +879,7 @@ async function loadSettings() {
   const bk = await fetch('/api/brand-knowledge').then(r=>r.json());
   document.getElementById('brand-knowledge').value = bk.value || '';
   await loadMockMode();
+  await loadPrompt();
 }
 
 async function loadMockMode() {
@@ -902,6 +906,23 @@ async function saveMockMode() {
     body: JSON.stringify({enabled, text})
   });
   const msg = document.getElementById('mock-save-msg');
+  msg.style.display = 'inline';
+  setTimeout(() => msg.style.display = 'none', 2000);
+}
+
+async function loadPrompt() {
+  const cfg = await fetch('/api/node-config').then(r=>r.json());
+  document.getElementById('linkedin-prompt').value = cfg.linkedin_prompt || '';
+}
+
+async function savePrompt() {
+  const val = document.getElementById('linkedin-prompt').value;
+  await fetch('/api/node-config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({linkedin_prompt: val})
+  });
+  const msg = document.getElementById('prompt-save-msg');
   msg.style.display = 'inline';
   setTimeout(() => msg.style.display = 'none', 2000);
 }
@@ -1033,9 +1054,8 @@ const NODE_CFG = {
     fields:[
       {l:'Model', key:'claude_model', type:'select',
        options:['claude-haiku-4-5-20251001','claude-sonnet-5','claude-opus-4-8']},
-      {l:'Prompt', v:'Edit in Settings tab', readonly:true}
-    ],
-    btn:{label:'Open Settings →', fn:'goToSettings'} },
+      {l:'LinkedIn Prompt', key:'linkedin_prompt', type:'textarea'}
+    ]},
   'review': { desc:'Pauses for human review. Edit the copy inline in the modal before approving.',
     fields:[{l:'UI', v:'Dashboard modal (editable)', readonly:true}], dynamic:'pending' },
   'blotato': { desc:'Posts the approved copy to LinkedIn via the Blotato API.',
@@ -1185,19 +1205,22 @@ async function openCfg(id) {
   let config={};
   try { config=await fetch('/api/node-config').then(r=>r.json()); } catch(e){}
 
+  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   let html=`<div class="fcfg-desc">${cfg.desc}</div>`;
   let hasEditable=false;
   for(const f of cfg.fields) {
     if(f.readonly||!f.key) {
-      html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><div class="fcfg-val">${f.v??''}</div></div>`;
+      html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><div class="fcfg-val">${esc(f.v??'')}</div></div>`;
     } else {
       hasEditable=true;
-      const val=(config[f.key]??f.v??'').toString().replace(/"/g,'&quot;');
+      const raw=config[f.key]??f.v??'';
       if(f.type==='select') {
-        const opts=f.options.map(o=>`<option value="${o}"${o===config[f.key]?' selected':''}>${o}</option>`).join('');
+        const opts=f.options.map(o=>`<option value="${esc(o)}"${o===config[f.key]?' selected':''}>${esc(o)}</option>`).join('');
         html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><select class="fcfg-input" data-key="${f.key}">${opts}</select></div>`;
+      } else if(f.type==='textarea') {
+        html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><textarea class="fcfg-textarea fcfg-input" data-key="${f.key}" style="min-height:220px">${esc(raw)}</textarea></div>`;
       } else {
-        html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><input class="fcfg-input" type="${f.type||'text'}" data-key="${f.key}" value="${val}"></div>`;
+        html+=`<div class="fcfg-field"><span class="fcfg-lbl">${f.l}</span><input class="fcfg-input" type="${f.type||'text'}" data-key="${f.key}" value="${esc(raw)}"></div>`;
       }
     }
   }
@@ -1277,7 +1300,6 @@ _REVIEW_HTML = """<!doctype html>
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d}"
-    prompt_preview = LINKEDIN_PROMPT[:600] + "..."
     return (
         _DASHBOARD_HTML
         .replace("__CSS__", _KNIGHTS_CSS)
@@ -1285,7 +1307,6 @@ async def dashboard():
         .replace("__NOTION_DB_ID__", NOTION_DB_ID)
         .replace("__LMTZ_PAGE_ID__", LMTZ_PAGE_ID)
         .replace("__BASE_URL__", BASE_URL)
-        .replace("__PROMPT_PREVIEW__", prompt_preview)
     )
 
 
@@ -1325,16 +1346,17 @@ async def get_node_config():
     h = get_kv("schedule_hour", str(SCHEDULE_HOUR))
     m = get_kv("schedule_minute", str(SCHEDULE_MINUTE))
     return {
-        "schedule_time": f"{int(h):02d}:{int(m):02d}",
-        "notion_db_id":  get_kv("notion_db_id",  NOTION_DB_ID),
-        "lmtz_page_id":  get_kv("lmtz_page_id",  LMTZ_PAGE_ID),
-        "claude_model":  get_kv("claude_model",   "claude-haiku-4-5-20251001"),
+        "schedule_time":   f"{int(h):02d}:{int(m):02d}",
+        "notion_db_id":    get_kv("notion_db_id",    NOTION_DB_ID),
+        "lmtz_page_id":    get_kv("lmtz_page_id",    LMTZ_PAGE_ID),
+        "claude_model":    get_kv("claude_model",     "claude-haiku-4-5-20251001"),
+        "linkedin_prompt": get_kv("linkedin_prompt",  LINKEDIN_PROMPT),
     }
 
 
 @app.post("/api/node-config")
 async def set_node_config(payload: dict):
-    allowed = {"schedule_time", "notion_db_id", "lmtz_page_id", "claude_model"}
+    allowed = {"schedule_time", "notion_db_id", "lmtz_page_id", "claude_model", "linkedin_prompt"}
     for key, value in payload.items():
         if key not in allowed:
             continue
