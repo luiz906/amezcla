@@ -307,11 +307,9 @@ async def post_to_linkedin_via_blotato(content: str) -> dict:
 # ---------------------------------------------------------------------------
 # Slack
 # ---------------------------------------------------------------------------
-async def notify_slack(review_id: str, post_name: str, preview: str):
-    if not SLACK_WEBHOOK_URL:
-        return
+def _build_slack_blocks(review_id: str, post_name: str, preview: str) -> list:
     preview_short = preview[:500] + ("…" if len(preview) > 500 else "")
-    blocks = [
+    return [
         {
             "type": "section",
             "text": {
@@ -343,11 +341,19 @@ async def notify_slack(review_id: str, post_name: str, preview: str):
             ],
         },
     ]
+
+
+async def notify_slack(review_id: str, post_name: str, preview: str):
+    if not SLACK_WEBHOOK_URL:
+        print("[Slack] SLACK_WEBHOOK_URL not set — skipping notification")
+        return
+    blocks = _build_slack_blocks(review_id, post_name, preview)
     async with httpx.AsyncClient(timeout=10) as client:
-        await client.post(
+        r = await client.post(
             SLACK_WEBHOOK_URL,
-            json={"text": f"LinkedIn post ready: {post_name}", "blocks": blocks},
+            json={"text": f"LinkedIn post ready for review: {post_name}", "blocks": blocks},
         )
+    print(f"[Slack] webhook response: {r.status_code} {r.text}")
 
 
 async def _do_approve(review_id: str, content: str | None = None) -> tuple[bool, str]:
@@ -766,6 +772,16 @@ _DASHBOARD_HTML = """<!doctype html>
           <div class="debug-card-head">API Status</div>
           <div class="debug-card-body" id="api-status">Checking...</div>
         </div>
+        <div class="debug-card">
+          <div class="debug-card-head">Slack</div>
+          <div class="debug-card-body">
+            <div id="slack-cfg-status">Checking...</div>
+            <div style="margin-top:12px">
+              <button class="table-refresh" onclick="testSlack()" id="slack-test-btn">Send Test Message</button>
+              <span id="slack-test-msg" style="font-family:var(--mono);font-size:.72rem;margin-left:10px;display:none"></span>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="notion-raw">
         <div class="notion-raw-head">
@@ -918,9 +934,10 @@ async function loadDebug() {
   document.getElementById('notion-raw-pre').textContent = 'Loading...';
   document.getElementById('api-status').innerHTML = 'Checking...';
   try {
-    const [health, notion] = await Promise.all([
+    const [health, notion, cfg] = await Promise.all([
       fetch('/health').then(r => r.json()),
       fetch('/debug-notion').then(r => r.json()),
+      fetch('/api/config').then(r => r.json()),
     ]);
     document.getElementById('api-status').innerHTML =
       `<div><span style="color:var(--green)">● ONLINE</span></div>` +
@@ -928,10 +945,34 @@ async function loadDebug() {
       `<div>Posts &nbsp;<span>${notion.length} rows fetched</span></div>`;
     document.getElementById('notion-raw-pre').textContent =
       JSON.stringify(notion, null, 2);
+    const slackSet = cfg.SLACK_WEBHOOK_URL === '✓ SET';
+    document.getElementById('slack-cfg-status').innerHTML =
+      `<div>Webhook &nbsp;<span style="color:${slackSet?'var(--green)':'var(--red)'}">${slackSet ? '✓ SET' : '✗ NOT SET — add SLACK_WEBHOOK_URL in Render'}</span></div>` +
+      `<div style="font-size:.68rem;color:var(--text-dim);margin-top:6px">Click Send Test Message to verify delivery</div>`;
+    document.getElementById('slack-test-btn').disabled = !slackSet;
   } catch(e) {
     document.getElementById('api-status').innerHTML = `<span style="color:var(--red)">Error: ${e}</span>`;
     document.getElementById('notion-raw-pre').textContent = 'Failed to load.';
   }
+}
+
+async function testSlack() {
+  const btn = document.getElementById('slack-test-btn');
+  const msg = document.getElementById('slack-test-msg');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  msg.style.display = 'none';
+  try {
+    const r = await fetch('/api/test-slack', {method:'POST'}).then(r=>r.json());
+    msg.textContent = r.message;
+    msg.style.color = r.status === 'ok' ? 'var(--green)' : 'var(--red)';
+  } catch(e) {
+    msg.textContent = 'Request failed: ' + e.message;
+    msg.style.color = 'var(--red)';
+  }
+  msg.style.display = 'inline';
+  btn.disabled = false;
+  btn.textContent = 'Send Test Message';
 }
 
 // Settings
@@ -1630,6 +1671,22 @@ async def debug_notion():
             props[name] = {"type": ptype, "raw": val}
         out.append({"id": page["id"], "properties": props})
     return out
+
+
+@app.post("/api/test-slack")
+async def test_slack():
+    if not SLACK_WEBHOOK_URL:
+        return {"status": "error", "message": "SLACK_WEBHOOK_URL env var is not set"}
+    test_id = "test-" + str(uuid.uuid4())[:8]
+    blocks = _build_slack_blocks(test_id, "Test Post (no action)", "This is a test notification from the LinkedIn automation app. The Approve and Reject buttons won't do anything for this test message.")
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(
+            SLACK_WEBHOOK_URL,
+            json={"text": "Test notification from LinkedIn automation", "blocks": blocks},
+        )
+    if r.status_code == 200 and r.text == "ok":
+        return {"status": "ok", "message": "Test message sent to Slack"}
+    return {"status": "error", "message": f"Slack returned {r.status_code}: {r.text}"}
 
 
 @app.get("/health")
