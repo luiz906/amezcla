@@ -410,7 +410,8 @@ async def run_workflow() -> str:
     review_id = str(uuid.uuid4())
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO pending_reviews VALUES (?,?,?,?,?,?)",
+            "INSERT INTO pending_reviews (id, notion_page_id, post_name, post_content, status, created_at)"
+            " VALUES (?,?,?,?,?,?)",
             (review_id, page_id, post_name, post_text, "pending",
              datetime.now(timezone.utc).isoformat()),
         )
