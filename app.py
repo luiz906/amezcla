@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -8,7 +10,7 @@ from datetime import datetime, timezone
 import httpx
 from anthropic import Anthropic
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 # ---------------------------------------------------------------------------
@@ -24,6 +26,7 @@ BLOTATO_API_KEY = os.environ["BLOTATO_API_KEY"]
 BLOTATO_LINKEDIN_ACCOUNT_ID = os.environ["BLOTATO_LINKEDIN_ACCOUNT_ID"]
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000").rstrip("/")
 BRAND_KNOWLEDGE = os.environ.get("BRAND_KNOWLEDGE", "")
 
@@ -57,7 +60,9 @@ def init_db():
                 post_name       TEXT,
                 post_content    TEXT,
                 status          TEXT DEFAULT 'pending',
-                created_at      TEXT
+                created_at      TEXT,
+                slack_ts        TEXT,
+                slack_channel   TEXT
             )
         """)
         conn.execute("""
@@ -66,6 +71,12 @@ def init_db():
                 value TEXT
             )
         """)
+        # Migrate existing tables that lack the new Slack columns
+        for col in ("slack_ts", "slack_channel"):
+            try:
+                conn.execute(f"ALTER TABLE pending_reviews ADD COLUMN {col} TEXT")
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -299,18 +310,74 @@ async def post_to_linkedin_via_blotato(content: str) -> dict:
 async def notify_slack(review_id: str, post_name: str, preview: str):
     if not SLACK_WEBHOOK_URL:
         return
-    review_url = f"{BASE_URL}/review/{review_id}"
-    preview_short = preview[:400] + ("..." if len(preview) > 400 else "")
-    payload = {
-        "text": (
-            f"*LinkedIn post ready for review* ✏️\n"
-            f"*{post_name}*\n\n"
-            f"```{preview_short}```\n\n"
-            f"<{review_url}|→ Review & Approve>"
-        )
-    }
+    preview_short = preview[:500] + ("…" if len(preview) > 500 else "")
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":pencil: *LinkedIn Post Ready for Review*\n*{post_name}*",
+            },
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"```{preview_short}```"},
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "✓ Approve & Post"},
+                    "style": "primary",
+                    "action_id": "approve",
+                    "value": review_id,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "✗ Reject"},
+                    "style": "danger",
+                    "action_id": "reject",
+                    "value": review_id,
+                },
+            ],
+        },
+    ]
     async with httpx.AsyncClient(timeout=10) as client:
-        await client.post(SLACK_WEBHOOK_URL, json=payload)
+        await client.post(
+            SLACK_WEBHOOK_URL,
+            json={"text": f"LinkedIn post ready: {post_name}", "blocks": blocks},
+        )
+
+
+async def _do_approve(review_id: str, content: str | None = None) -> tuple[bool, str]:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM pending_reviews WHERE id=?", (review_id,)).fetchone()
+    if not row or row["status"] != "pending":
+        return False, "Not found or already processed"
+    final_content = content or row["post_content"]
+    if content:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE pending_reviews SET post_content=? WHERE id=?", (content, review_id)
+            )
+    try:
+        await post_to_linkedin_via_blotato(final_content)
+    except Exception as e:
+        return False, f"Blotato error: {e}"
+    try:
+        await mark_notion_page_posted(row["notion_page_id"])
+    except Exception as e:
+        return False, f"Notion error (post WAS sent): {e}"
+    with get_db() as conn:
+        conn.execute("UPDATE pending_reviews SET status='approved' WHERE id=?", (review_id,))
+    return True, ""
+
+
+async def _do_reject(review_id: str) -> tuple[bool, str]:
+    with get_db() as conn:
+        conn.execute("UPDATE pending_reviews SET status='rejected' WHERE id=?", (review_id,))
+    return True, ""
 
 
 # ---------------------------------------------------------------------------
@@ -1454,50 +1521,19 @@ async def review_page(review_id: str):
 
 @app.post("/review/{review_id}/approve", response_class=HTMLResponse)
 async def approve_post(review_id: str, request: Request):
-    import traceback
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM pending_reviews WHERE id = ?", (review_id,)
-        ).fetchone()
-        if not row or row["status"] != "pending":
-            raise HTTPException(400, "Not found or already processed")
-
     body = {}
     try:
         body = await request.json()
     except Exception:
         pass
-    final_content = body.get("content", "").strip() or row["post_content"]
-
-    if body.get("content", "").strip():
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE pending_reviews SET post_content = ? WHERE id = ?",
-                (final_content, review_id)
-            )
-
-    try:
-        await post_to_linkedin_via_blotato(final_content)
-    except Exception as e:
+    edited = body.get("content", "").strip() or None
+    ok, err = await _do_approve(review_id, content=edited)
+    if not ok:
         return HTMLResponse(
-            f'<html><body style="background:#08080a;color:#e04028;font-family:monospace;padding:40px;white-space:pre-wrap">'
-            f'<b>Blotato error:</b>\n{e}\n\n{traceback.format_exc()}</body></html>',
-            status_code=200
+            f'<html><body style="background:#08080a;color:#e04028;font-family:monospace;padding:40px">'
+            f'<b>Error:</b> {err}</body></html>',
+            status_code=200,
         )
-    try:
-        await mark_notion_page_posted(row["notion_page_id"])
-    except Exception as e:
-        return HTMLResponse(
-            f'<html><body style="background:#08080a;color:#e04028;font-family:monospace;padding:40px;white-space:pre-wrap">'
-            f'<b>Notion update error (post WAS sent to LinkedIn):</b>\n{e}</body></html>',
-            status_code=200
-        )
-
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE pending_reviews SET status = 'approved' WHERE id = ?", (review_id,)
-        )
-
     return HTMLResponse(
         '<html><body style="background:#08080a;color:#28e060;font-family:Rajdhani,sans-serif;text-align:center;padding:80px">'
         "<h2>✓ Posted to LinkedIn</h2>"
@@ -1508,15 +1544,73 @@ async def approve_post(review_id: str, request: Request):
 
 @app.post("/review/{review_id}/reject", response_class=HTMLResponse)
 async def reject_post(review_id: str):
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE pending_reviews SET status = 'rejected' WHERE id = ?", (review_id,)
-        )
+    await _do_reject(review_id)
     return HTMLResponse(
         '<html><body style="background:#08080a;color:#e04028;font-family:Rajdhani,sans-serif;text-align:center;padding:80px">'
         "<h2>✗ Post rejected</h2>"
         "</body></html>"
     )
+
+
+@app.post("/slack/interactive")
+async def slack_interactive(request: Request, background_tasks: BackgroundTasks):
+    body_bytes = await request.body()
+
+    # Optional signature verification
+    if SLACK_SIGNING_SECRET:
+        ts = request.headers.get("X-Slack-Request-Timestamp", "")
+        sig = request.headers.get("X-Slack-Signature", "")
+        base = f"v0:{ts}:{body_bytes.decode()}"
+        expected = "v0=" + hmac.new(
+            SLACK_SIGNING_SECRET.encode(), base.encode(), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            raise HTTPException(403, "Invalid Slack signature")
+
+    form = await request.form()
+    try:
+        payload = json.loads(form.get("payload", "{}"))
+    except Exception:
+        raise HTTPException(400, "Bad payload")
+
+    actions = payload.get("actions", [])
+    if not actions:
+        return Response("ok")
+
+    action = actions[0]
+    action_id = action.get("action_id")
+    review_id = action.get("value", "")
+    response_url = payload.get("response_url", "")
+
+    if action_id not in ("approve", "reject"):
+        return Response("ok")
+
+    async def process():
+        if action_id == "approve":
+            ok, err = await _do_approve(review_id)
+            if ok:
+                result = ":white_check_mark: *Approved and posted to LinkedIn!*"
+            else:
+                result = f":x: Error: {err}"
+        else:
+            ok, err = await _do_reject(review_id)
+            result = ":x: *Post rejected.*" if ok else f":x: Error: {err}"
+
+        if response_url:
+            async with httpx.AsyncClient(timeout=15) as client:
+                await client.post(
+                    response_url,
+                    json={
+                        "replace_original": True,
+                        "text": result,
+                        "blocks": [
+                            {"type": "section", "text": {"type": "mrkdwn", "text": result}}
+                        ],
+                    },
+                )
+
+    background_tasks.add_task(process)
+    return Response("", status_code=200)
 
 
 @app.get("/debug-notion")
