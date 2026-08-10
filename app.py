@@ -394,7 +394,14 @@ async def _do_reject(review_id: str) -> tuple[bool, str]:
 
 async def _do_skip(review_id: str) -> tuple[bool, str]:
     with get_db() as conn:
+        row = conn.execute("SELECT * FROM pending_reviews WHERE id=?", (review_id,)).fetchone()
+        if not row:
+            return False, "Not found"
         conn.execute("UPDATE pending_reviews SET status='skipped' WHERE id=?", (review_id,))
+    try:
+        await mark_notion_page_posted(row["notion_page_id"])
+    except Exception as e:
+        return True, f"Skipped in DB but Notion update failed: {e}"
     return True, ""
 
 
