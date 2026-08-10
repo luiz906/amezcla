@@ -217,7 +217,7 @@ Power Statement – End with a clear, definitive thought that feels like truth.
 Call to Action – Finish with a short question or prompt that invites reflection or response.
 
 Add exactly 3 hashtags inline at the end: one topic-specific, one target-audience-specific, one general. No labels, no bullet points — just the hashtags.
-Output only the copy. No section titles, no labels like "Rehook:" "Title:", no formatting notes. DO NOT ADD "POWER STATEMENT:" Don't add #underdogs, replace with #smallbiz.
+Output only the copy. Do not start with the post name or any title/heading — jump straight into the hook. No section titles, no labels like "Rehook:" "Title:", no formatting notes. DO NOT ADD "POWER STATEMENT:" Don't add #underdogs, replace with #smallbiz.
 
 ---
 Page properties:
