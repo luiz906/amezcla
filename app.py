@@ -1634,68 +1634,69 @@ async def skip_post(review_id: str):
 
 @app.post("/slack/interactive")
 async def slack_interactive(request: Request, background_tasks: BackgroundTasks):
-    body_bytes = await request.body()
-
-    if SLACK_SIGNING_SECRET:
-        ts = request.headers.get("X-Slack-Request-Timestamp", "")
-        sig = request.headers.get("X-Slack-Signature", "")
-        base = f"v0:{ts}:{body_bytes.decode()}"
-        expected = "v0=" + hmac.new(
-            SLACK_SIGNING_SECRET.encode(), base.encode(), hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(expected, sig):
-            raise HTTPException(403, "Invalid Slack signature")
-
-    form = await request.form()
+    from urllib.parse import parse_qs
     try:
-        payload = json.loads(form.get("payload", "{}"))
-    except Exception:
-        raise HTTPException(400, "Bad payload")
+        body_bytes = await request.body()
+        body_str = body_bytes.decode("utf-8")
 
-    payload_type = payload.get("type")
+        if SLACK_SIGNING_SECRET:
+            ts = request.headers.get("X-Slack-Request-Timestamp", "")
+            sig = request.headers.get("X-Slack-Signature", "")
+            base = f"v0:{ts}:{body_str}"
+            expected = "v0=" + hmac.new(
+                SLACK_SIGNING_SECRET.encode(), base.encode(), hashlib.sha256
+            ).hexdigest()
+            if not hmac.compare_digest(expected, sig):
+                return Response("Forbidden", status_code=403)
 
-    # ── Modal submitted (Edit & Post flow) ───────────────────────────────────
-    if payload_type == "view_submission":
-        review_id = payload.get("view", {}).get("private_metadata", "")
-        values = payload.get("view", {}).get("state", {}).get("values", {})
-        edited = ""
-        for block in values.values():
-            for action in block.values():
-                edited = action.get("value", "") or ""
-        if review_id and edited:
-            async def do_edit():
-                await _do_approve(review_id, content=edited)
-            background_tasks.add_task(do_edit)
-        return Response("{}", media_type="application/json")
+        # Parse form body manually (avoids double-read issue with request.form())
+        parsed = parse_qs(body_str)
+        payload_str = parsed.get("payload", ["{}"])[0]
+        payload = json.loads(payload_str)
+        print(f"[Slack] type={payload.get('type')} actions={[a.get('action_id') for a in payload.get('actions', [])]}")
 
-    # ── Button click ─────────────────────────────────────────────────────────
-    actions = payload.get("actions", [])
-    if not actions:
-        return Response("ok")
+        payload_type = payload.get("type")
 
-    action = actions[0]
-    action_id = action.get("action_id")
-    review_id = action.get("value", "")
-    response_url = payload.get("response_url", "")
-    trigger_id = payload.get("trigger_id", "")
+        # ── Modal submitted (Edit & Post flow) ────────────────────────────────
+        if payload_type == "view_submission":
+            review_id = payload.get("view", {}).get("private_metadata", "")
+            values = payload.get("view", {}).get("state", {}).get("values", {})
+            edited = ""
+            for block in values.values():
+                for act in block.values():
+                    edited = act.get("value", "") or ""
+            if review_id and edited:
+                async def do_edit():
+                    await _do_approve(review_id, content=edited)
+                background_tasks.add_task(do_edit)
+            return Response("{}", media_type="application/json")
 
-    if action_id == "edit":
-        # Open a Slack modal so they can edit inline
-        if SLACK_BOT_TOKEN:
-            with get_db() as conn:
-                row = conn.execute(
-                    "SELECT post_content FROM pending_reviews WHERE id=?", (review_id,)
-                ).fetchone()
-            current = row["post_content"] if row else ""
-            modal = {
-                "type": "modal",
-                "callback_id": "edit_post",
-                "private_metadata": review_id,
-                "title": {"type": "plain_text", "text": "Edit & Post"},
-                "submit": {"type": "plain_text", "text": "Approve & Post"},
-                "close": {"type": "plain_text", "text": "Cancel"},
-                "blocks": [
-                    {
+        # ── Button click ──────────────────────────────────────────────────────
+        actions = payload.get("actions", [])
+        if not actions:
+            return Response("ok")
+
+        action = actions[0]
+        action_id = action.get("action_id")
+        review_id = action.get("value", "")
+        response_url = payload.get("response_url", "")
+        trigger_id = payload.get("trigger_id", "")
+
+        if action_id == "edit":
+            if SLACK_BOT_TOKEN:
+                with get_db() as conn:
+                    row = conn.execute(
+                        "SELECT post_content FROM pending_reviews WHERE id=?", (review_id,)
+                    ).fetchone()
+                current = row["post_content"] if row else ""
+                modal = {
+                    "type": "modal",
+                    "callback_id": "edit_post",
+                    "private_metadata": review_id,
+                    "title": {"type": "plain_text", "text": "Edit & Post"},
+                    "submit": {"type": "plain_text", "text": "Approve & Post"},
+                    "close": {"type": "plain_text", "text": "Cancel"},
+                    "blocks": [{
                         "type": "input",
                         "block_id": "post_block",
                         "label": {"type": "plain_text", "text": "Post copy"},
@@ -1705,49 +1706,51 @@ async def slack_interactive(request: Request, background_tasks: BackgroundTasks)
                             "multiline": True,
                             "initial_value": current,
                         },
-                    }
-                ],
-            }
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(
-                    "https://slack.com/api/views.open",
-                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
-                    json={"trigger_id": trigger_id, "view": modal},
-                )
-        else:
-            # Fallback: send review URL if no bot token
-            review_url = f"{BASE_URL}/review/{review_id}"
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(response_url, json={
-                    "replace_original": False,
-                    "text": f"Edit on the web: {review_url}",
-                })
+                    }],
+                }
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.post(
+                        "https://slack.com/api/views.open",
+                        headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                        json={"trigger_id": trigger_id, "view": modal},
+                    )
+            elif response_url:
+                review_url = f"{BASE_URL}/review/{review_id}"
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.post(response_url, json={
+                        "replace_original": False,
+                        "text": f"Edit on the web: {review_url}",
+                    })
+            return Response("", status_code=200)
+
+        if action_id not in ("approve", "skip"):
+            return Response("ok")
+
+        async def process():
+            try:
+                if action_id == "approve":
+                    ok, err = await _do_approve(review_id)
+                    result = ":white_check_mark: *Approved and posted to LinkedIn!*" if ok else f":x: Error: {err}"
+                else:
+                    ok, err = await _do_skip(review_id)
+                    result = ":fast_forward: *Topic skipped.*" if ok else f":x: Error: {err}"
+                print(f"[Slack] {action_id} result: {result}")
+                if response_url:
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        await client.post(response_url, json={
+                            "replace_original": True,
+                            "text": result,
+                            "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": result}}],
+                        })
+            except Exception as e:
+                print(f"[Slack] process error: {e}")
+
+        background_tasks.add_task(process)
         return Response("", status_code=200)
 
-    if action_id not in ("approve", "skip"):
-        return Response("ok")
-
-    async def process():
-        if action_id == "approve":
-            ok, err = await _do_approve(review_id)
-            result = ":white_check_mark: *Approved and posted to LinkedIn!*" if ok else f":x: Error: {err}"
-        else:
-            ok, err = await _do_skip(review_id)
-            result = ":fast_forward: *Topic skipped.*" if ok else f":x: Error: {err}"
-
-        if response_url:
-            async with httpx.AsyncClient(timeout=15) as client:
-                await client.post(
-                    response_url,
-                    json={
-                        "replace_original": True,
-                        "text": result,
-                        "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": result}}],
-                    },
-                )
-
-    background_tasks.add_task(process)
-    return Response("", status_code=200)
+    except Exception as e:
+        print(f"[Slack interactive] unhandled error: {e}")
+        return Response("ok", status_code=200)
 
 
 @app.get("/debug-notion")
