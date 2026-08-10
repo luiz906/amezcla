@@ -26,6 +26,7 @@ BLOTATO_API_KEY = os.environ["BLOTATO_API_KEY"]
 BLOTATO_LINKEDIN_ACCOUNT_ID = os.environ["BLOTATO_LINKEDIN_ACCOUNT_ID"]
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000").rstrip("/")
 BRAND_KNOWLEDGE = os.environ.get("BRAND_KNOWLEDGE", "")
@@ -333,9 +334,14 @@ def _build_slack_blocks(review_id: str, post_name: str, preview: str) -> list:
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "✗ Reject"},
-                    "style": "danger",
-                    "action_id": "reject",
+                    "text": {"type": "plain_text", "text": "✎ Edit & Post"},
+                    "action_id": "edit",
+                    "value": review_id,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "↷ Skip Topic"},
+                    "action_id": "skip",
                     "value": review_id,
                 },
             ],
@@ -383,6 +389,12 @@ async def _do_approve(review_id: str, content: str | None = None) -> tuple[bool,
 async def _do_reject(review_id: str) -> tuple[bool, str]:
     with get_db() as conn:
         conn.execute("UPDATE pending_reviews SET status='rejected' WHERE id=?", (review_id,))
+    return True, ""
+
+
+async def _do_skip(review_id: str) -> tuple[bool, str]:
+    with get_db() as conn:
+        conn.execute("UPDATE pending_reviews SET status='skipped' WHERE id=?", (review_id,))
     return True, ""
 
 
@@ -530,6 +542,7 @@ tr:last-child td{border-bottom:none}
 .badge-pending{color:#f0b030;border-color:#f0b030;background:rgba(240,176,48,.08)}
 .badge-approved{color:var(--green);border-color:var(--green);background:rgba(40,224,96,.08)}
 .badge-rejected{color:var(--red);border-color:var(--red);background:rgba(224,64,40,.08)}
+.badge-skipped{color:var(--text-dim);border-color:var(--text-dim);background:rgba(122,96,64,.08)}
 .review-link{color:var(--amber);text-decoration:none;font-family:var(--mono);font-size:.75rem;letter-spacing:.05em;border-bottom:1px solid var(--amber-dim);transition:border-color .15s}
 .review-link:hover{border-color:var(--amber)}
 .empty-row td{text-align:center;color:var(--text-dim);font-family:var(--mono);font-size:.8rem;padding:48px}
@@ -592,6 +605,9 @@ input:checked + .toggle-slider:before{transform:translateX(18px);background:var(
 .btn-reject{background:none;border:1px solid var(--red);color:var(--red);padding:10px 24px;font-family:var(--head);font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:all .15s}
 .btn-reject:hover{background:rgba(224,64,40,.1)}
 .btn-reject:disabled{opacity:.4;cursor:not-allowed}
+.btn-skip{background:none;border:1px solid var(--text-dim);color:var(--text-dim);padding:10px 24px;font-family:var(--head);font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:all .15s}
+.btn-skip:hover{border-color:var(--amber);color:var(--amber)}
+.btn-skip:disabled{opacity:.4;cursor:not-allowed}
 .modal-msg{font-family:var(--mono);font-size:.75rem;color:var(--text-dim);margin-left:auto;align-self:center}
 
 /* FLOW CANVAS */
@@ -875,6 +891,7 @@ _DASHBOARD_HTML = """<!doctype html>
     <div class="modal-actions">
       <button class="btn-approve" id="modal-approve" onclick="submitReview('approve')">✓ Approve &amp; Post</button>
       <button class="btn-reject"  id="modal-reject"  onclick="submitReview('reject')">✗ Reject</button>
+      <button class="btn-skip"    id="modal-skip"    onclick="submitReview('skip')">↷ Skip</button>
       <span class="modal-msg" id="modal-msg"></span>
     </div>
   </div>
@@ -1080,6 +1097,7 @@ async function openReview(id, name) {
   document.getElementById('modal-msg').textContent = '';
   document.getElementById('modal-approve').disabled = false;
   document.getElementById('modal-reject').disabled = false;
+  document.getElementById('modal-skip').disabled = false;
   document.getElementById('modal').classList.add('open');
   const res = await fetch('/api/review/' + id);
   const data = await res.json();
@@ -1095,6 +1113,7 @@ async function submitReview(action) {
   if (!_activeReviewId) return;
   document.getElementById('modal-approve').disabled = true;
   document.getElementById('modal-reject').disabled = true;
+  document.getElementById('modal-skip').disabled = true;
   document.getElementById('modal-msg').textContent = 'Processing...';
   const content = document.getElementById('modal-post').value;
   const res = await fetch('/review/' + _activeReviewId + '/' + action, {
@@ -1109,9 +1128,11 @@ async function submitReview(action) {
     document.getElementById('modal-post').value = text.replace(/<[^>]*>/g,'').trim();
     document.getElementById('modal-approve').disabled = false;
     document.getElementById('modal-reject').disabled = false;
+    document.getElementById('modal-skip').disabled = false;
   } else {
-    document.getElementById('modal-msg').style.color = 'var(--green)';
-    document.getElementById('modal-msg').textContent = action === 'approve' ? '✓ Posted to LinkedIn!' : '✗ Rejected';
+    const labels = {approve:'✓ Posted to LinkedIn!', reject:'✗ Rejected', skip:'↷ Skipped'};
+    document.getElementById('modal-msg').style.color = action === 'approve' ? 'var(--green)' : action === 'skip' ? 'var(--amber)' : 'var(--red)';
+    document.getElementById('modal-msg').textContent = labels[action] || 'Done';
     setTimeout(() => { closeModal(); loadPosts(); }, 1500);
   }
 }
@@ -1594,11 +1615,20 @@ async def reject_post(review_id: str):
     )
 
 
+@app.post("/review/{review_id}/skip", response_class=HTMLResponse)
+async def skip_post(review_id: str):
+    await _do_skip(review_id)
+    return HTMLResponse(
+        '<html><body style="background:#08080a;color:#7a6040;font-family:Rajdhani,sans-serif;text-align:center;padding:80px">'
+        "<h2>↷ Topic skipped</h2>"
+        "</body></html>"
+    )
+
+
 @app.post("/slack/interactive")
 async def slack_interactive(request: Request, background_tasks: BackgroundTasks):
     body_bytes = await request.body()
 
-    # Optional signature verification
     if SLACK_SIGNING_SECRET:
         ts = request.headers.get("X-Slack-Request-Timestamp", "")
         sig = request.headers.get("X-Slack-Signature", "")
@@ -1615,6 +1645,23 @@ async def slack_interactive(request: Request, background_tasks: BackgroundTasks)
     except Exception:
         raise HTTPException(400, "Bad payload")
 
+    payload_type = payload.get("type")
+
+    # ── Modal submitted (Edit & Post flow) ───────────────────────────────────
+    if payload_type == "view_submission":
+        review_id = payload.get("view", {}).get("private_metadata", "")
+        values = payload.get("view", {}).get("state", {}).get("values", {})
+        edited = ""
+        for block in values.values():
+            for action in block.values():
+                edited = action.get("value", "") or ""
+        if review_id and edited:
+            async def do_edit():
+                await _do_approve(review_id, content=edited)
+            background_tasks.add_task(do_edit)
+        return Response("{}", media_type="application/json")
+
+    # ── Button click ─────────────────────────────────────────────────────────
     actions = payload.get("actions", [])
     if not actions:
         return Response("ok")
@@ -1623,20 +1670,63 @@ async def slack_interactive(request: Request, background_tasks: BackgroundTasks)
     action_id = action.get("action_id")
     review_id = action.get("value", "")
     response_url = payload.get("response_url", "")
+    trigger_id = payload.get("trigger_id", "")
 
-    if action_id not in ("approve", "reject"):
+    if action_id == "edit":
+        # Open a Slack modal so they can edit inline
+        if SLACK_BOT_TOKEN:
+            with get_db() as conn:
+                row = conn.execute(
+                    "SELECT post_content FROM pending_reviews WHERE id=?", (review_id,)
+                ).fetchone()
+            current = row["post_content"] if row else ""
+            modal = {
+                "type": "modal",
+                "callback_id": "edit_post",
+                "private_metadata": review_id,
+                "title": {"type": "plain_text", "text": "Edit & Post"},
+                "submit": {"type": "plain_text", "text": "Approve & Post"},
+                "close": {"type": "plain_text", "text": "Cancel"},
+                "blocks": [
+                    {
+                        "type": "input",
+                        "block_id": "post_block",
+                        "label": {"type": "plain_text", "text": "Post copy"},
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": "post_content",
+                            "multiline": True,
+                            "initial_value": current,
+                        },
+                    }
+                ],
+            }
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    "https://slack.com/api/views.open",
+                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                    json={"trigger_id": trigger_id, "view": modal},
+                )
+        else:
+            # Fallback: send review URL if no bot token
+            review_url = f"{BASE_URL}/review/{review_id}"
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(response_url, json={
+                    "replace_original": False,
+                    "text": f"Edit on the web: {review_url}",
+                })
+        return Response("", status_code=200)
+
+    if action_id not in ("approve", "skip"):
         return Response("ok")
 
     async def process():
         if action_id == "approve":
             ok, err = await _do_approve(review_id)
-            if ok:
-                result = ":white_check_mark: *Approved and posted to LinkedIn!*"
-            else:
-                result = f":x: Error: {err}"
+            result = ":white_check_mark: *Approved and posted to LinkedIn!*" if ok else f":x: Error: {err}"
         else:
-            ok, err = await _do_reject(review_id)
-            result = ":x: *Post rejected.*" if ok else f":x: Error: {err}"
+            ok, err = await _do_skip(review_id)
+            result = ":fast_forward: *Topic skipped.*" if ok else f":x: Error: {err}"
 
         if response_url:
             async with httpx.AsyncClient(timeout=15) as client:
@@ -1645,9 +1735,7 @@ async def slack_interactive(request: Request, background_tasks: BackgroundTasks)
                     json={
                         "replace_original": True,
                         "text": result,
-                        "blocks": [
-                            {"type": "section", "text": {"type": "mrkdwn", "text": result}}
-                        ],
+                        "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": result}}],
                     },
                 )
 
