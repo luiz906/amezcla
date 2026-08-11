@@ -6,7 +6,31 @@
       "mcp__Claude_in_Chrome__tabs_context_mcp",
       "Bash(curl -s -A \"Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/120.0 Safari/537.36\" \"https://run.relay.app/shared/amezcla-daily-drive-blotato-instagram-facebook-Wi8zOUQw9ba2\" -o /tmp/relay_page.html -w \"HTTP %{http_code}\\\\n\")",
       "Read(//private/tmp/**)",
-      "Bash(curl -s \"https://run.relay.app/_next/data/KH_965VX2TOCjo1Rs_toT/shared/amezcla-daily-drive-blotato-instagram-facebook-Wi8zOUQw9ba2.json\" -w \"\\\\nHTTP %{http_code}\\\\n\" -o /tmp/relay_data.json)"
+      "Bash(curl -s \"https://run.relay.app/_next/data/KH_965VX2TOCjo1Rs_toT/shared/amezcla-daily-drive-blotato-instagram-facebook-Wi8zOUQw9ba2.json\" -w \"\\\\nHTTP %{http_code}\\\\n\" -o /tmp/relay_data.json)",
+      "Bash(git push *)",
+      "Bash(git fetch *)",
+      "Bash(git merge *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "WebFetch(domain:claude.ai)",
+      "mcp__claude-in-chrome__navigate",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('app.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('app.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(curl -s https://linkedin-post-automation-vs7p.onrender.com/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" https://linkedin-post-automation-vs7p.onrender.com/)",
+      "Bash(curl -s https://linkedin-post-automation-vs7p.onrender.com/)",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\" https://linkedin-post-automation-vs7p.onrender.com/health)",
+      "Bash(NOTION_TOKEN=test ANTHROPIC_API_KEY=test BLOTATO_API_KEY=test BLOTATO_LINKEDIN_ACCOUNT_ID=test python3 -c \"import app; print\\('Module loaded OK'\\)\")",
+      "Bash(pip install *)",
+      "Bash(NOTION_TOKEN=test ANTHROPIC_API_KEY=test BLOTATO_API_KEY=test BLOTATO_LINKEDIN_ACCOUNT_ID=test python3 -c \"import app; print\\('OK'\\)\")",
+      "Bash(pip3 install *)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(NOTION_TOKEN=test ANTHROPIC_API_KEY=test BLOTATO_API_KEY=test BLOTATO_LINKEDIN_ACCOUNT_ID=test .venv/bin/python3 -c \"import app; print\\('OK'\\)\")",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\" https://linkedin-post-automation-vs7p.onrender.com/)",
+      "Bash(python3 -c \"import app\")",
+      "Bash(python3 -m py_compile app.py)"
     ]
   }
 }
