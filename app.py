@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import html
 import json
 import os
 import sqlite3
@@ -24,6 +25,8 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 
 BLOTATO_API_KEY = os.environ["BLOTATO_API_KEY"]
 BLOTATO_LINKEDIN_ACCOUNT_ID = os.environ["BLOTATO_LINKEDIN_ACCOUNT_ID"]
+# Optional LinkedIn Company Page ID — when set, posts go to the page instead of the personal profile
+BLOTATO_LINKEDIN_PAGE_ID = os.environ.get("BLOTATO_LINKEDIN_PAGE_ID", "")
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
@@ -39,6 +42,63 @@ NOTION_HEADERS = {
     "Notion-Version": "2022-06-28",
     "Content-Type": "application/json",
 }
+
+# ---------------------------------------------------------------------------
+# Notion sources — each one is a database the workflow pulls posts from,
+# with its own status names and LinkedIn destination.
+# ---------------------------------------------------------------------------
+PRIMARY_SOURCE = "primary"
+SECONDARY_SOURCE = "secondary"
+
+SOURCES: dict[str, dict] = {
+    PRIMARY_SOURCE: {
+        "key": PRIMARY_SOURCE,
+        "label": os.environ.get("SOURCE_LABEL", "Primary"),
+        "notion_db_id": NOTION_DB_ID,
+        "status_prop": "Status",
+        "status_type": "status",
+        "ready_status": "Not Started",
+        "posted_status": "Posted 🎉",
+        "posted_date_prop": "Posting Date",
+        "posted_type": "Written Post",
+        "relation_filter": True,
+        "blotato_account_id": BLOTATO_LINKEDIN_ACCOUNT_ID,
+        "linkedin_page_id": BLOTATO_LINKEDIN_PAGE_ID,
+        "brand_knowledge": BRAND_KNOWLEDGE,
+    },
+}
+
+# Second Notion database — enabled when NOTION_DB_ID_2 is set
+if os.environ.get("NOTION_DB_ID_2", "").strip():
+    SOURCES[SECONDARY_SOURCE] = {
+        "key": SECONDARY_SOURCE,
+        "label": os.environ.get("SOURCE_LABEL_2", "Source 2"),
+        "notion_db_id": os.environ["NOTION_DB_ID_2"].strip(),
+        "status_prop": os.environ.get("NOTION_STATUS_PROP_2", "Status"),
+        "status_type": os.environ.get("NOTION_STATUS_TYPE_2", "status"),  # "status" or "select"
+        "ready_status": os.environ.get("NOTION_READY_STATUS_2", ""),
+        "posted_status": os.environ.get("NOTION_POSTED_STATUS_2", ""),
+        "posted_date_prop": os.environ.get("NOTION_POSTED_DATE_PROP_2", ""),
+        "posted_type": "",
+        "relation_filter": False,
+        "blotato_account_id": os.environ.get("BLOTATO_LINKEDIN_ACCOUNT_ID_2", BLOTATO_LINKEDIN_ACCOUNT_ID),
+        "linkedin_page_id": os.environ.get("BLOTATO_LINKEDIN_PAGE_ID_2", ""),
+        "brand_knowledge": os.environ.get("BRAND_KNOWLEDGE_2", ""),
+    }
+
+
+def get_source(key: str | None) -> dict:
+    src = SOURCES.get(key or PRIMARY_SOURCE)
+    if not src:
+        raise KeyError(f"Unknown or disabled Notion source: {key!r}")
+    return src
+
+
+def source_db_id(src: dict) -> str:
+    # The primary database ID can be overridden from the dashboard
+    if src["key"] == PRIMARY_SOURCE:
+        return get_kv("notion_db_id", src["notion_db_id"])
+    return src["notion_db_id"]
 
 # ---------------------------------------------------------------------------
 # Database (SQLite — persisted via Render disk)
@@ -78,23 +138,34 @@ def init_db():
                 conn.execute(f"ALTER TABLE pending_reviews ADD COLUMN {col} TEXT")
             except Exception:
                 pass
+        # Existing rows all came from the primary source
+        try:
+            conn.execute(
+                f"ALTER TABLE pending_reviews ADD COLUMN source TEXT DEFAULT '{PRIMARY_SOURCE}'"
+            )
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
 # Notion helpers
 # ---------------------------------------------------------------------------
-async def find_notion_page() -> dict | None:
-    """Return the first Not Started / LMTZ page, or None."""
-    db_id = get_kv("notion_db_id", NOTION_DB_ID)
-    lmtz_id = get_kv("lmtz_page_id", LMTZ_PAGE_ID)
+def _status_value(src: dict, name: str) -> dict:
+    return {src["status_type"]: {"name": name}}
+
+
+async def find_notion_page(src: dict) -> dict | None:
+    """Return the first ready-to-post page in the source's database, or None."""
+    db_id = source_db_id(src)
     url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    filters = [
+        {"property": src["status_prop"], src["status_type"]: {"equals": src["ready_status"]}},
+    ]
+    if src["relation_filter"]:
+        lmtz_id = get_kv("lmtz_page_id", LMTZ_PAGE_ID)
+        filters.append({"property": "ClientsOS", "relation": {"contains": lmtz_id}})
     body = {
-        "filter": {
-            "and": [
-                {"property": "Status", "status": {"equals": "Not Started"}},
-                {"property": "ClientsOS", "relation": {"contains": lmtz_id}},
-            ]
-        },
+        "filter": filters[0] if len(filters) == 1 else {"and": filters},
         "page_size": 1,
     }
     async with httpx.AsyncClient(timeout=30) as client:
@@ -181,17 +252,16 @@ async def append_to_notion_page(page_id: str, content: str):
         r.raise_for_status()
 
 
-async def mark_notion_page_posted(page_id: str):
-    """Update Status → Posted 🎉, set Posting Date and Type."""
+async def mark_notion_page_posted(page_id: str, src: dict):
+    """Update Status → the source's posted status; set Posting Date / Type where configured."""
     url = f"https://api.notion.com/v1/pages/{page_id}"
     now = datetime.now(timezone.utc).isoformat()
-    body = {
-        "properties": {
-            "Status": {"status": {"name": "Posted 🎉"}},
-            "Posting Date": {"date": {"start": now}},
-            "Type": {"select": {"name": "Written Post"}},
-        }
-    }
+    props = {src["status_prop"]: _status_value(src, src["posted_status"])}
+    if src["posted_date_prop"]:
+        props[src["posted_date_prop"]] = {"date": {"start": now}}
+    if src["posted_type"]:
+        props["Type"] = {"select": {"name": src["posted_type"]}}
+    body = {"properties": props}
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.patch(url, json=body, headers=NOTION_HEADERS)
         r.raise_for_status()
@@ -253,12 +323,18 @@ def get_mock_mode() -> dict:
         return {"enabled": False, "text": ""}
 
 
-def generate_linkedin_post(post_name: str, properties: str, content: str, mock_text: str = "") -> str:
+def generate_linkedin_post(post_name: str, properties: str, content: str, mock_text: str = "",
+                           src: dict | None = None) -> str:
     if mock_text:
         return mock_text
+    src = src or get_source(PRIMARY_SOURCE)
     client = Anthropic(api_key=ANTHROPIC_API_KEY)
-    system = "You are a social media content expert and brand designer for Amezcla."
-    bk = get_kv("brand_knowledge", BRAND_KNOWLEDGE)
+    if src["key"] == PRIMARY_SOURCE:
+        system = "You are a social media content expert and brand designer for Amezcla."
+        bk = get_kv("brand_knowledge", src["brand_knowledge"])
+    else:
+        system = f"You are a social media content expert writing LinkedIn posts for {src['label']}."
+        bk = src["brand_knowledge"]
     if bk:
         system += f"\n\nBrand knowledge:\n{bk}"
 
@@ -281,7 +357,16 @@ def generate_linkedin_post(post_name: str, properties: str, content: str, mock_t
 # ---------------------------------------------------------------------------
 # Blotato
 # ---------------------------------------------------------------------------
-async def post_to_linkedin_via_blotato(content: str) -> dict:
+def build_linkedin_target(page_id: str = "") -> dict:
+    """Blotato LinkedIn target. With a pageId it posts to that Company Page; without, the personal profile."""
+    target = {"targetType": "linkedin"}
+    if page_id:
+        target["pageId"] = str(page_id)
+    return target
+
+
+async def post_to_linkedin_via_blotato(content: str, src: dict | None = None) -> dict:
+    src = src or get_source(PRIMARY_SOURCE)
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
             "https://backend.blotato.com/v2/posts",
@@ -291,13 +376,13 @@ async def post_to_linkedin_via_blotato(content: str) -> dict:
             },
             json={
                 "post": {
-                    "accountId": BLOTATO_LINKEDIN_ACCOUNT_ID,
+                    "accountId": src["blotato_account_id"],
                     "content": {
                         "text": content,
                         "mediaUrls": [],
                         "platform": "linkedin",
                     },
-                    "target": {"targetType": "linkedin"},
+                    "target": build_linkedin_target(src["linkedin_page_id"]),
                 }
             },
         )
@@ -308,14 +393,17 @@ async def post_to_linkedin_via_blotato(content: str) -> dict:
 # ---------------------------------------------------------------------------
 # Slack
 # ---------------------------------------------------------------------------
-def _build_slack_blocks(review_id: str, post_name: str, preview: str) -> list:
+def _build_slack_blocks(review_id: str, post_name: str, preview: str, source_label: str = "") -> list:
     preview_short = preview[:500] + ("…" if len(preview) > 500 else "")
+    header = f":pencil: *LinkedIn Post Ready for Review*"
+    if source_label:
+        header += f" — {source_label}"
     return [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f":pencil: *LinkedIn Post Ready for Review*\n*{post_name}*",
+                "text": f"{header}\n*{post_name}*",
             },
         },
         {
@@ -349,11 +437,11 @@ def _build_slack_blocks(review_id: str, post_name: str, preview: str) -> list:
     ]
 
 
-async def notify_slack(review_id: str, post_name: str, preview: str):
+async def notify_slack(review_id: str, post_name: str, preview: str, source_label: str = ""):
     if not SLACK_WEBHOOK_URL:
         print("[Slack] SLACK_WEBHOOK_URL not set — skipping notification")
         return
-    blocks = _build_slack_blocks(review_id, post_name, preview)
+    blocks = _build_slack_blocks(review_id, post_name, preview, source_label)
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(
             SLACK_WEBHOOK_URL,
@@ -374,11 +462,15 @@ async def _do_approve(review_id: str, content: str | None = None) -> tuple[bool,
                 "UPDATE pending_reviews SET post_content=? WHERE id=?", (content, review_id)
             )
     try:
-        await post_to_linkedin_via_blotato(final_content)
+        src = get_source(row["source"])
+    except KeyError as e:
+        return False, str(e)
+    try:
+        await post_to_linkedin_via_blotato(final_content, src)
     except Exception as e:
         return False, f"Blotato error: {e}"
     try:
-        await mark_notion_page_posted(row["notion_page_id"])
+        await mark_notion_page_posted(row["notion_page_id"], src)
     except Exception as e:
         return False, f"Notion error (post WAS sent): {e}"
     with get_db() as conn:
@@ -399,7 +491,7 @@ async def _do_skip(review_id: str) -> tuple[bool, str]:
             return False, "Not found"
         conn.execute("UPDATE pending_reviews SET status='skipped' WHERE id=?", (review_id,))
     try:
-        await mark_notion_page_posted(row["notion_page_id"])
+        await mark_notion_page_posted(row["notion_page_id"], get_source(row["source"]))
     except Exception as e:
         return True, f"Skipped in DB but Notion update failed: {e}"
     return True, ""
@@ -408,43 +500,69 @@ async def _do_skip(review_id: str) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 # Main workflow
 # ---------------------------------------------------------------------------
-async def run_workflow() -> str:
-    print(f"[{datetime.now()}] Running LinkedIn post workflow...")
+async def run_source(src: dict) -> str:
+    label = src["label"]
+    print(f"  [{label}] querying Notion DB {source_db_id(src)}")
+    if not src["ready_status"] or not src["posted_status"]:
+        msg = f"[{label}] skipped — set NOTION_READY_STATUS_2 and NOTION_POSTED_STATUS_2."
+        print(f"  {msg}")
+        return msg
 
-    page = await find_notion_page()
+    page = await find_notion_page(src)
     if not page:
-        msg = "No pages found with Status=Not Started and ClientsOS=LMTZ."
+        msg = f"[{label}] No pages found with {src['status_prop']}={src['ready_status']}"
+        if src["relation_filter"]:
+            msg += " and ClientsOS=LMTZ"
+        msg += "."
         print(f"  {msg}")
         return msg
 
     page_id = page["id"]
     post_name = _extract_page_name(page)
-    print(f"  Page: {post_name!r} ({page_id})")
+    print(f"  [{label}] Page: {post_name!r} ({page_id})")
 
     properties = await get_page_properties_as_text(page)
     content = await get_page_blocks_as_text(page_id)
 
     mock = get_mock_mode()
     mock_text = mock["text"] if mock["enabled"] else ""
-    post_text = generate_linkedin_post(post_name, properties, content, mock_text=mock_text)
-    label = "[MOCK]" if mock_text else ""
-    print(f"  Generated {len(post_text)} chars of copy. {label}")
+    post_text = generate_linkedin_post(post_name, properties, content, mock_text=mock_text, src=src)
+    mock_label = "[MOCK]" if mock_text else ""
+    print(f"  [{label}] Generated {len(post_text)} chars of copy. {mock_label}")
 
     await append_to_notion_page(page_id, post_text)
 
     review_id = str(uuid.uuid4())
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO pending_reviews (id, notion_page_id, post_name, post_content, status, created_at)"
-            " VALUES (?,?,?,?,?,?)",
+            "INSERT INTO pending_reviews (id, notion_page_id, post_name, post_content, status, created_at, source)"
+            " VALUES (?,?,?,?,?,?,?)",
             (review_id, page_id, post_name, post_text, "pending",
-             datetime.now(timezone.utc).isoformat()),
+             datetime.now(timezone.utc).isoformat(), src["key"]),
         )
 
-    await notify_slack(review_id, post_name, post_text)
-    msg = f"Post generated for '{post_name}'. Review: {BASE_URL}/review/{review_id}"
+    slack_label = label if len(SOURCES) > 1 else ""
+    await notify_slack(review_id, post_name, post_text, slack_label)
+    msg = f"[{label}] Post generated for '{post_name}'. Review: {BASE_URL}/review/{review_id}"
     print(f"  {msg}")
     return msg
+
+
+async def run_workflow(source_key: str | None = None) -> str:
+    """Run one source, or every configured source. A failure in one source doesn't stop the others."""
+    print(f"[{datetime.now()}] Running LinkedIn post workflow...")
+    sources = [get_source(source_key)] if source_key else list(SOURCES.values())
+    messages, errors = [], []
+    for src in sources:
+        try:
+            messages.append(await run_source(src))
+        except Exception as e:
+            err = f"[{src['label']}] error: {e}"
+            print(f"  {err}")
+            errors.append(err)
+    if errors and not messages:
+        raise RuntimeError(" | ".join(errors))
+    return " | ".join(messages + errors)
 
 
 # ---------------------------------------------------------------------------
@@ -787,6 +905,7 @@ _DASHBOARD_HTML = """<!doctype html>
           <div class="debug-card-body">
             <div>DB ID &nbsp;&nbsp;<span>__NOTION_DB_ID__</span></div>
             <div>LMTZ ID &nbsp;<span>__LMTZ_PAGE_ID__</span></div>
+            __SOURCES_HTML__
             <div>Schedule <span>__NEXT_RUN__ UTC</span></div>
             <div>Base URL <span>__BASE_URL__</span></div>
           </div>
@@ -938,7 +1057,7 @@ async function loadPosts() {
       const action = p.status === 'pending'
         ? `<a class="review-link" href="#" onclick="openReview('${p.id}','${(p.post_name||'').replace(/'/g,"\\'")}');return false">Review →</a>` : '';
       return `<tr>
-        <td>${p.post_name || '(untitled)'}</td>
+        <td>${p.post_name || '(untitled)'}${p.source_label ? ` <span style="font-family:var(--mono);font-size:.7rem;color:var(--text-dim)">· ${p.source_label}</span>` : ''}</td>
         <td><span class="badge badge-${p.status}">${p.status}</span></td>
         <td style="font-family:var(--mono);font-size:.75rem;color:var(--text-dim)">${created}</td>
         <td>${action}</td>
@@ -1437,12 +1556,18 @@ _REVIEW_HTML = """<!doctype html>
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     next_run = f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d}"
+    sources_html = "".join(
+        f"<div>{html.escape(src['label'])} DB <span>{html.escape(src['notion_db_id'])}</span></div>"
+        f"<div>{html.escape(src['label'])} Page <span>{html.escape(src['linkedin_page_id'] or 'personal profile')}</span></div>"
+        for key, src in SOURCES.items() if key != PRIMARY_SOURCE
+    )
     return (
         _DASHBOARD_HTML
         .replace("__CSS__", _KNIGHTS_CSS)
         .replace("__NEXT_RUN__", next_run)
         .replace("__NOTION_DB_ID__", NOTION_DB_ID)
         .replace("__LMTZ_PAGE_ID__", LMTZ_PAGE_ID)
+        .replace("__SOURCES_HTML__", sources_html)
         .replace("__BASE_URL__", BASE_URL)
     )
 
@@ -1451,9 +1576,15 @@ async def dashboard():
 async def api_posts():
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, post_name, status, created_at FROM pending_reviews ORDER BY created_at DESC LIMIT 50"
+            "SELECT id, post_name, status, created_at, source FROM pending_reviews ORDER BY created_at DESC LIMIT 50"
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        src = SOURCES.get(d.get("source") or PRIMARY_SOURCE)
+        d["source_label"] = src["label"] if src else (d.get("source") or "")
+        out.append(d)
+    return out
 
 
 @app.get("/api/config")
@@ -1475,6 +1606,18 @@ async def api_config():
         "SCHEDULE":                  f"{SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d} UTC daily",
         "NOTION_DB_ID":              NOTION_DB_ID,
         "LMTZ_PAGE_ID":              LMTZ_PAGE_ID,
+        "SOURCES": [
+            {
+                "key":                src["key"],
+                "label":              src["label"],
+                "notion_db_id":       source_db_id(src),
+                "ready_status":       src["ready_status"] or "✗ MISSING",
+                "posted_status":      src["posted_status"] or "✗ MISSING",
+                "blotato_account_id": src["blotato_account_id"],
+                "linkedin_page_id":   src["linkedin_page_id"] or "— personal profile",
+            }
+            for src in SOURCES.values()
+        ],
     }
 
 
@@ -1547,10 +1690,10 @@ async def set_mock_mode_api(payload: dict):
 
 
 @app.post("/api/run")
-async def api_run():
+async def api_run(source: str | None = None):
     import traceback
     try:
-        result = await run_workflow()
+        result = await run_workflow(source)
         return {"status": "ok", "message": result}
     except Exception as e:
         return {"status": "error", "message": str(e), "trace": traceback.format_exc()}
@@ -1754,8 +1897,12 @@ async def slack_interactive(request: Request, background_tasks: BackgroundTasks)
 
 
 @app.get("/debug-notion")
-async def debug_notion():
-    url = f"https://api.notion.com/v1/databases/{NOTION_DB_ID}/query"
+async def debug_notion(source: str | None = None):
+    try:
+        src = get_source(source)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    url = f"https://api.notion.com/v1/databases/{source_db_id(src)}/query"
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, json={"page_size": 3}, headers=NOTION_HEADERS)
         r.raise_for_status()

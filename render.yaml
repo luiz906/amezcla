@@ -25,6 +25,27 @@ services:
         sync: false
       - key: BRAND_KNOWLEDGE
         sync: false
+      # Second Notion source (GEFCO) — posts to the GEFCO LinkedIn Company Page
+      - key: SOURCE_LABEL_2
+        value: GEFCO
+      - key: NOTION_DB_ID_2
+        value: 772663a4-7b37-820a-aaf2-818b05d7aa3b
+      - key: NOTION_READY_STATUS_2
+        sync: false
+      - key: NOTION_POSTED_STATUS_2
+        sync: false
+      - key: NOTION_STATUS_PROP_2
+        sync: false
+      - key: NOTION_STATUS_TYPE_2
+        sync: false
+      - key: NOTION_POSTED_DATE_PROP_2
+        sync: false
+      - key: BLOTATO_LINKEDIN_ACCOUNT_ID_2
+        value: "11255"
+      - key: BLOTATO_LINKEDIN_PAGE_ID_2
+        value: "98984707"
+      - key: BRAND_KNOWLEDGE_2
+        sync: false
       - key: SCHEDULE_HOUR
         value: "9"
       - key: SCHEDULE_MINUTE
